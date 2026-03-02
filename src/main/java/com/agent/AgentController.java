@@ -1,40 +1,59 @@
 package com.agent;
 
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
+import com.agent.model.AgentQueryRequest;
+import com.agent.model.AgentQueryResponse;
+import com.agent.service.AgentService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 /**
- * REST Controller for Agent endpoint
+ * REST controller for the evidence-grounded agent API.
  */
 @RestController
+@RequestMapping("/agent")
 public class AgentController {
+    private static final Logger logger = LoggerFactory.getLogger(AgentController.class);
+    
+    private final AgentService agentService;
 
-    @GetMapping("/")
-    public String agent() {
-        return "Agent, World!";
-    }
-
-    @GetMapping("/api/greeting")
-    public Greeting greeting() {
-        return new Greeting("Greetings from Legal Agent Spring Boot Application!");
+    public AgentController(AgentService agentService) {
+        this.agentService = agentService;
     }
 
     /**
-     * Simple greeting model
+     * POST /agent/query
+     * Process a query and return an evidence-grounded answer.
+     * 
+     * @param request The query request containing question, topK, and optional filters
+     * @return Agent response with answer, evidence, and verification results
      */
-    public static class Greeting {
-        private String message;
-
-        public Greeting(String message) {
-            this.message = message;
-        }
-
-        public String getMessage() {
-            return message;
-        }
-
-        public void setMessage(String message) {
-            this.message = message;
+    @PostMapping("/query")
+    public ResponseEntity<AgentQueryResponse> query(@RequestBody AgentQueryRequest request) {
+        logger.info("Received query request for question: {}", request.question());
+        
+        try {
+            AgentQueryResponse response = agentService.processQuery(request);
+            logger.info("Query processed successfully");
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            logger.warn("Invalid request: {}", e.getMessage());
+            return ResponseEntity.badRequest().build();
+        } catch (Exception e) {
+            logger.error("Unexpected error processing query", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
+
+    /**
+     * GET /agent/health
+     * Health check endpoint.
+     */
+    @GetMapping("/health")
+    public ResponseEntity<String> health() {
+        return ResponseEntity.ok("Agent is running");
+    }
 }
+

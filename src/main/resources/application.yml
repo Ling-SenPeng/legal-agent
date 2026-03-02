@@ -1,0 +1,54 @@
+spring:
+  application:
+    name: legal-agent
+  
+  datasource:
+    url: ${JDBC_URL:jdbc:postgresql://localhost:5432/legal_agent}
+    username: ${JDBC_USER:postgres}
+    password: ${JDBC_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+logging:
+  level:
+    root: INFO
+    com.agent: DEBUG
+    org.springframework.web: INFO
+    org.springframework.jdbc: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# OpenAI Configuration
+openai:
+  api-key: ${OPENAI_API_KEY:}
+  model: ${OPENAI_MODEL:gpt-4-mini}
+  embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-large}
+  timeout-ms: 30000
+
+# Agent Configuration
+agent:
+  default-top-k: 8
+  verification:
+    enabled: true
+    repair-enabled: true
+    factual-keywords: paid,lived,moved,asked,agreed,owed,purchased,sold,received,gave,sent,dated,signed,executed,witnessed,acknowledged,admitted
