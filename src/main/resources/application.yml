@@ -42,7 +42,7 @@ logging:
 openai:
   api-key: ${OPENAI_API_KEY:}
   model: ${OPENAI_MODEL:gpt-4-mini}
-  embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-large}
+  embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
   timeout-ms: 30000
 
 # Agent Configuration
