@@ -208,6 +208,131 @@ Response:
 
 Response: `"Agent is running"`
 
+## End-to-End Usage Examples
+
+### Example 1: Simple Contract Question
+
+Query the agent to find specific payment terms:
+
+```bash
+curl -X POST http://localhost:8080/agent/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "How much did John Smith agree to pay?",
+    "topK": 5,
+    "filters": null
+  }'
+```
+
+Expected response:
+```json
+{
+  "answer": "John Smith agreed to pay $10,000 on January 15, 2023. [CIT doc=1 chunk=0 p=1-1]",
+  "evidence": [
+    {
+      "chunkId": 0,
+      "docId": 1,
+      "pageNo": 1,
+      "text": "John Smith agreed to pay $10,000 on January 15, 2023, as per the contract terms.",
+      "similarity": 0.96,
+      "citations": "[CIT doc=1 chunk=0 p=1-1]"
+    }
+  ],
+  "verification": {
+    "passed": true,
+    "missingCitationLines": [],
+    "notes": "All factual claims have proper citations."
+  },
+  "processingTimeMs": 245
+}
+```
+
+### Example 2: Multi-Part Question with Evidence
+
+Ask a complex question requiring multiple evidence pieces:
+
+```bash
+curl -X POST http://localhost:8080/agent/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What are the complete payment terms and when does completion occur?",
+    "topK": 8,
+    "filters": null
+  }'
+```
+
+Expected response:
+```json
+{
+  "answer": "The contract specifies that payment is split into two parts. [CIT doc=1 chunk=1 p=2-2] Payment terms are: 50% upfront and 50% upon completion. [CIT doc=1 chunk=1 p=2-2] Both parties signed the agreement on February 1, 2023. [CIT doc=1 chunk=2 p=3-3]",
+  "evidence": [
+    {
+      "chunkId": 1,
+      "docId": 1,
+      "pageNo": 2,
+      "text": "Payment terms: 50% upfront, 50% upon completion. The buyer received the full documentation.",
+      "similarity": 0.94,
+      "citations": "[CIT doc=1 chunk=1 p=2-2]"
+    },
+    {
+      "chunkId": 2,
+      "docId": 1,
+      "pageNo": 3,
+      "text": "Both parties signed the agreement on February 1, 2023. Witness: Jane Doe.",
+      "similarity": 0.91,
+      "citations": "[CIT doc=1 chunk=2 p=3-3]"
+    }
+  ],
+  "verification": {
+    "passed": true,
+    "missingCitationLines": [],
+    "notes": "All factual claims properly cited with document references."
+  },
+  "processingTimeMs": 387
+}
+```
+
+### Example 3: Named Entity Recognition
+
+Query for specific people or dates mentioned in documents:
+
+```bash
+curl -X POST http://localhost:8080/agent/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Who are the witnesses and signers of this agreement?",
+    "topK": 5,
+    "filters": null
+  }'
+```
+
+Expected response includes properly cited names and roles.
+
+### Example 4: Verification with Auto-Repair
+
+Query that tests the citation verification and optional auto-repair:
+
+```bash
+curl -X POST http://localhost:8080/agent/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "List all monetary amounts mentioned in the document.",
+    "topK": 8,
+    "filters": null
+  }'
+```
+
+The response will include all citations in the format `[CIT doc=1 chunk=5 p=10-11]` for each monetary amount mentioned.
+
+### Example 5: Health Check (Pre-Query Verification)
+
+Always check health before queries:
+
+```bash
+curl http://localhost:8080/agent/health
+# Response: "Agent is running"
+```
+
 ## Citation Format
 
 All factual claims in the answer must end with a citation token:
