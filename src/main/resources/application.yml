@@ -3,9 +3,9 @@ spring:
     name: legal-agent
   
   datasource:
-    url: ${JDBC_URL:jdbc:postgresql://localhost:5432/legal_agent}
-    username: ${JDBC_USER:postgres}
-    password: ${JDBC_PASSWORD:postgres}
+    url: ${db.url}
+    username: ${db.user}
+    password: ${db.password}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 20
