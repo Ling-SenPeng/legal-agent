@@ -6,8 +6,8 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 
 /**
- * Repository for querying PDF chunks with pgvector similarity search.
- * Note: For production, consider using Spring Data JPA or a custom RowMapper with pgvector.
+ * Repository for querying PDF chunks with pgvector similarity search and full-text search.
+ * Supports both vector-only and hybrid search modes.
  */
 @Repository
 public class ChunkRepository {
@@ -16,6 +16,95 @@ public class ChunkRepository {
 
     public ChunkRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+    }
+
+    /**
+     * Vector search: Find top-K most similar chunks using pgvector cosine distance.
+     * 
+     * @param embeddingVector String representation of the vector (e.g., "[0.1,0.2,...]")
+     * @param topK Number of top results to return
+     * @return List of most similar evidence chunks with vectorScore populated
+     */
+    public List<EvidenceChunk> searchByVector(String embeddingVector, int topK) {
+        String query = """
+            SELECT 
+                c.id as chunk_id,
+                c.doc_id,
+                c.page_no,
+                c.page_no as page_start,
+                c.page_no as page_end,
+                c.text,
+                (1.0 - (c.embedding <=> ?::vector)) as vector_score
+            FROM pdf_chunks c
+            WHERE c.embedding IS NOT NULL
+            ORDER BY c.embedding <=> ?::vector
+            LIMIT ?
+            """;
+
+        return jdbcTemplate.query(
+            query,
+            (rs, rowNum) -> new EvidenceChunk(
+                rs.getLong("chunk_id"),
+                rs.getLong("doc_id"),
+                rs.getInt("page_no"),
+                rs.getInt("page_start"),
+                rs.getInt("page_end"),
+                rs.getString("text"),
+                rs.getDouble("vector_score"),
+                "",
+                rs.getDouble("vector_score"),  // vectorScore
+                null,                           // keywordScore
+                null                            // finalScore (computed later)
+            ),
+            embeddingVector,
+            embeddingVector,
+            topK
+        );
+    }
+
+    /**
+     * Keyword search: Find top-K chunks matching a full-text search query.
+     * Uses PostgreSQL full-text search with ts_rank_cd for ranking.
+     * 
+     * @param queryText The search query
+     * @param topK Number of top results to return
+     * @return List of text-matched evidence chunks with keywordScore populated
+     */
+    public List<EvidenceChunk> searchByKeyword(String queryText, int topK) {
+        String query = """
+            SELECT 
+                c.id as chunk_id,
+                c.doc_id,
+                c.page_no,
+                c.page_no as page_start,
+                c.page_no as page_end,
+                c.text,
+                ts_rank_cd(c.ts, websearch_to_tsquery('english', ?)) as keyword_score
+            FROM pdf_chunks c
+            WHERE c.ts @@ websearch_to_tsquery('english', ?)
+            ORDER BY keyword_score DESC
+            LIMIT ?
+            """;
+
+        return jdbcTemplate.query(
+            query,
+            (rs, rowNum) -> new EvidenceChunk(
+                rs.getLong("chunk_id"),
+                rs.getLong("doc_id"),
+                rs.getInt("page_no"),
+                rs.getInt("page_start"),
+                rs.getInt("page_end"),
+                rs.getString("text"),
+                rs.getDouble("keyword_score"),
+                "",
+                null,                           // vectorScore
+                rs.getDouble("keyword_score"),  // keywordScore
+                null                            // finalScore (computed later)
+            ),
+            queryText,
+            queryText,
+            topK
+        );
     }
 
     /**
@@ -52,7 +141,10 @@ public class ChunkRepository {
                 rs.getInt("page_end"),
                 rs.getString("text"),
                 rs.getDouble("similarity"),
-                "" // citations field populated later
+                "",
+                null,
+                null,
+                null
             ),
             embeddingVector,
             embeddingVector,
@@ -88,7 +180,10 @@ public class ChunkRepository {
                 rs.getInt("page_end"),
                 rs.getString("text"),
                 rs.getDouble("similarity"),
-                ""
+                "",
+                null,
+                null,
+                null
             ),
             docId,
             pageStart,

@@ -41,9 +41,16 @@ logging:
 # OpenAI Configuration
 openai:
   api-key: ${OPENAI_API_KEY:}
-  model: ${OPENAI_MODEL:gpt-4-mini}
+  model: ${OPENAI_MODEL:gpt-3.5-turbo}
   embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
   timeout-ms: 30000
+
+# Hybrid Search Configuration
+hybrid:
+  enabled: ${HYBRID_ENABLED:true}
+  top-k-vector: ${HYBRID_TOP_K_VECTOR:10}
+  top-k-keyword: ${HYBRID_TOP_K_KEYWORD:10}
+  alpha: ${HYBRID_ALPHA:0.6}
 
 # Agent Configuration
 agent:
@@ -52,3 +59,8 @@ agent:
     enabled: true
     repair-enabled: true
     factual-keywords: paid,lived,moved,asked,agreed,owed,purchased,sold,received,gave,sent,dated,signed,executed,witnessed,acknowledged,admitted
+  hybrid:
+    enabled: ${HYBRID_ENABLED:true}
+    top-k-vector: ${HYBRID_TOP_K_VECTOR:10}
+    top-k-keyword: ${HYBRID_TOP_K_KEYWORD:10}
+    alpha: ${HYBRID_ALPHA:0.6}

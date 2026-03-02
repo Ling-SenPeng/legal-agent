@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 public class AgentProperties {
     private int defaultTopK;
     private VerificationConfig verification;
+    private HybridConfig hybrid;
 
     public int getDefaultTopK() {
         return defaultTopK;
@@ -26,6 +27,14 @@ public class AgentProperties {
 
     public void setVerification(VerificationConfig verification) {
         this.verification = verification;
+    }
+
+    public HybridConfig getHybrid() {
+        return hybrid;
+    }
+
+    public void setHybrid(HybridConfig hybrid) {
+        this.hybrid = hybrid;
     }
 
     /**
@@ -58,6 +67,48 @@ public class AgentProperties {
 
         public void setFactualKeywords(String factualKeywords) {
             this.factualKeywords = factualKeywords;
+        }
+    }
+
+    /**
+     * Configuration for hybrid search.
+     */
+    public static class HybridConfig {
+        private boolean enabled = true;
+        private int topKVector = 10;
+        private int topKKeyword = 10;
+        private double alpha = 0.6;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getTopKVector() {
+            return topKVector;
+        }
+
+        public void setTopKVector(int topKVector) {
+            this.topKVector = topKVector;
+        }
+
+        public int getTopKKeyword() {
+            return topKKeyword;
+        }
+
+        public void setTopKKeyword(int topKKeyword) {
+            this.topKKeyword = topKKeyword;
+        }
+
+        public double getAlpha() {
+            return alpha;
+        }
+
+        public void setAlpha(double alpha) {
+            this.alpha = alpha;
         }
     }
 }
