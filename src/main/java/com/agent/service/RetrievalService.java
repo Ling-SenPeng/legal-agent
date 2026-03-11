@@ -60,6 +60,7 @@ public class RetrievalService {
         // Log full retrieval plan details
         logger.info("=== RETRIEVAL PLAN ===");
         logger.info("  Original query: {}", plan.getOriginalQuery());
+        logger.info("  Cleaned query: {}", plan.getCleanedQuery());
         logger.info("  Detected intent: {}", plan.getIntent());
         logger.info("  Keyword queries: {}", plan.getKeywordQueries());
         logger.info("  Vector query: {}", plan.getVectorQuery());
@@ -123,7 +124,7 @@ public class RetrievalService {
         // Step 3: Execute keyword search using planned keyword queries
         logger.info("Step 2: Keyword Search");
         logger.info("  Keyword queries ({} total): {}", plan.getKeywordQueries().size(), plan.getKeywordQueries());
-        List<EvidenceChunk> keywordResults = searchByKeywordQueries(plan.getKeywordQueries(), topKKeyword);
+        List<EvidenceChunk> keywordResults = searchByKeywordQueries(plan, topKKeyword);
         logger.info("  Keyword search results: {} hits (after dedup)", keywordResults.size());
         if (!keywordResults.isEmpty()) {
             logger.debug("  Top keyword hit - chunk: {}, score: {}", 
@@ -172,6 +173,16 @@ public class RetrievalService {
                     String.format("%.4f", finalResults.get(0).finalScore()));
         }
         
+        // Final summary
+        logger.info("=== RETRIEVAL SUMMARY ===");
+        logger.info("  Intent: {}", plan.getIntent());
+        logger.info("  Keyword queries: {}", plan.getKeywordQueries());
+        logger.info("  Vector query: {}", plan.getVectorQuery());
+        logger.info("  Keyword hits: {}", keywordResults.size());
+        logger.info("  Vector hits: {}", vectorResults.size());
+        logger.info("  Merged chunks: {}", mergedMap.size());
+        logger.info("  Final results: {} / {}", finalResults.size(), topK);
+        logger.info("  Fallback used: {}", plan.isFallbackUsed());
         logger.info("=== END HYBRID SEARCH ===");
         return finalResults;
     }
@@ -211,20 +222,39 @@ public class RetrievalService {
     }
 
     /**
-     * Perform keyword search with multiple keyword queries.
-     * Combines results from all keyword queries, deduplicating by chunk_id.
+     * Perform keyword search with fallback logic.
+     * Tries planned keyword queries first, then falls back to cleaned query, then original query.
+     * Combines results from all queries, deduplicating by chunk_id.
+     * 
+     * @param plan The retrieval plan containing keyword queries and fallback values
+     * @param topK Number of results per query
+     * @return Combined and deduplicated keyword search results
      */
-    private List<EvidenceChunk> searchByKeywordQueries(List<String> keywordQueries, int topK) {
+    private List<EvidenceChunk> searchByKeywordQueries(RetrievalPlan plan, int topK) {
+        List<String> keywordQueries = plan.getKeywordQueries();
+        String cleanedQuery = plan.getCleanedQuery();
+        String originalQuery = plan.getOriginalQuery();
+        
+        logger.debug("searchByKeywordQueries: Starting keyword search");
+        logger.debug("  Planned queries: {}", keywordQueries);
+        logger.debug("  Cleaned query: {}", cleanedQuery);
+        logger.debug("  Original query: {}", originalQuery);
+        
         if (keywordQueries.isEmpty()) {
-            logger.warn("No keyword queries provided for keyword search");
-            return List.of();
+            logger.warn("No keyword queries provided, using fallback strategy");
+            keywordQueries = List.of(cleanedQuery);
         }
 
         Map<Long, EvidenceChunk> combinedResults = new LinkedHashMap<>();
+        int totalAttempts = 0;
 
+        // Step 1: Try planned keyword queries
+        logger.info("Keyword Search - Attempt 1: Planned queries");
         for (String query : keywordQueries) {
-            logger.debug("Executing keyword search with query: {}", query);
+            logger.debug("  Executing query: {}", query);
             List<EvidenceChunk> results = chunkRepository.searchByKeyword(query, topK);
+            logger.debug("  Results: {} hits", results.size());
+            totalAttempts++;
             
             // Add results, keeping highest scoring version of each chunk
             for (EvidenceChunk chunk : results) {
@@ -243,10 +273,47 @@ public class RetrievalService {
             }
         }
 
+        // Step 2: Fallback to cleaned query if no results
+        if (combinedResults.isEmpty() && cleanedQuery != null && !cleanedQuery.trim().isEmpty()) {
+            logger.warn("Keyword search returned 0 results. Falling back to cleaned query: {}", cleanedQuery);
+            plan.setFallbackUsed(true);
+            
+            logger.info("Keyword Search - Attempt 2: Cleaned query fallback");
+            logger.debug("  Executing query: {}", cleanedQuery);
+            List<EvidenceChunk> fallbackResults = chunkRepository.searchByKeyword(cleanedQuery, topK);
+            logger.debug("  Results: {} hits", fallbackResults.size());
+            totalAttempts++;
+            
+            for (EvidenceChunk chunk : fallbackResults) {
+                combinedResults.put(chunk.chunkId(), chunk);
+            }
+        }
+
+        // Step 3: Fallback to original query if still no results
+        if (combinedResults.isEmpty() && originalQuery != null && !originalQuery.trim().isEmpty()) {
+            logger.warn("Keyword search still returned 0 results. Falling back to original query: {}", originalQuery);
+            plan.setFallbackUsed(true);
+            
+            logger.info("Keyword Search - Attempt 3: Original query fallback");
+            logger.debug("  Executing query: {}", originalQuery);
+            List<EvidenceChunk> fallbackResults = chunkRepository.searchByKeyword(originalQuery, topK);
+            logger.debug("  Results: {} hits", fallbackResults.size());
+            totalAttempts++;
+            
+            for (EvidenceChunk chunk : fallbackResults) {
+                combinedResults.put(chunk.chunkId(), chunk);
+            }
+        }
+
         // Return up to topK combined unique results
-        return combinedResults.values().stream()
+        List<EvidenceChunk> finalResults = combinedResults.values().stream()
                 .limit(topK)
                 .toList();
+        
+        logger.info("Keyword search completed: {} total hits, {} fallback used: {}",
+                finalResults.size(), totalAttempts, plan.isFallbackUsed());
+
+        return finalResults;
     }
 
     /**

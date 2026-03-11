@@ -8,23 +8,27 @@ import java.util.List;
  */
 public class RetrievalPlan {
     private String originalQuery;
+    private String cleanedQuery;  // Query after instruction words removed
     private String intent;
     private List<String> entities;
     private List<String> keywordQueries;
     private String vectorQuery;
     private String answerInstruction;
     private String outputFormat;
+    private boolean fallbackUsed;  // Track if fallback was triggered
 
-    public RetrievalPlan(String originalQuery, String intent, List<String> entities,
+    public RetrievalPlan(String originalQuery, String cleanedQuery, String intent, List<String> entities,
                          List<String> keywordQueries, String vectorQuery,
                          String answerInstruction, String outputFormat) {
         this.originalQuery = originalQuery;
+        this.cleanedQuery = cleanedQuery;
         this.intent = intent;
         this.entities = entities;
         this.keywordQueries = keywordQueries;
         this.vectorQuery = vectorQuery;
         this.answerInstruction = answerInstruction;
         this.outputFormat = outputFormat;
+        this.fallbackUsed = false;
     }
 
     // Getters and Setters
@@ -34,6 +38,14 @@ public class RetrievalPlan {
 
     public void setOriginalQuery(String originalQuery) {
         this.originalQuery = originalQuery;
+    }
+
+    public String getCleanedQuery() {
+        return cleanedQuery;
+    }
+
+    public void setCleanedQuery(String cleanedQuery) {
+        this.cleanedQuery = cleanedQuery;
     }
 
     public String getIntent() {
@@ -84,16 +96,26 @@ public class RetrievalPlan {
         this.outputFormat = outputFormat;
     }
 
+    public boolean isFallbackUsed() {
+        return fallbackUsed;
+    }
+
+    public void setFallbackUsed(boolean fallbackUsed) {
+        this.fallbackUsed = fallbackUsed;
+    }
+
     @Override
     public String toString() {
         return "RetrievalPlan{" +
                 "originalQuery='" + originalQuery + '\'' +
+                ", cleanedQuery='" + cleanedQuery + '\'' +
                 ", intent='" + intent + '\'' +
                 ", entities=" + entities +
                 ", keywordQueries=" + keywordQueries +
                 ", vectorQuery='" + vectorQuery + '\'' +
                 ", answerInstruction='" + answerInstruction + '\'' +
                 ", outputFormat='" + outputFormat + '\'' +
+                ", fallbackUsed=" + fallbackUsed +
                 '}';
     }
 }

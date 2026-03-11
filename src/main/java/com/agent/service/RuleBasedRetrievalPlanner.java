@@ -71,6 +71,7 @@ public class RuleBasedRetrievalPlanner implements RetrievalPlanner {
         
         RetrievalPlan plan = new RetrievalPlan(
                 originalQuery,
+                cleanedQuery,
                 intent,
                 entities,
                 keywordQueries,
