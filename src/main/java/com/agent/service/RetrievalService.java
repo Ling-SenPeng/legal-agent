@@ -45,25 +45,44 @@ public class RetrievalService {
      * Retrieve top-K most relevant evidence chunks for a given question.
      * Uses RetrievalPlanner to optimize the query before searching.
      * Uses hybrid search (vector + keyword) by default if configured.
+     * Returns the retrieval plan so it can be used by downstream stages (e.g., LLM drafting).
      * 
      * @param question The user's question
      * @param topK Number of chunks to retrieve
      * @return List of evidence chunks sorted by relevance
      */
     public List<EvidenceChunk> retrieveEvidence(String question, int topK) {
-        logger.info("Retrieving {} evidence chunks for question: {}", topK, question);
-        logger.debug("DEBUG: Creating retrieval plan from question");
+        logger.info("RetrievalService: Retrieving {} evidence chunks", topK);
         
         // Step 1: Generate retrieval plan
         RetrievalPlan plan = retrievalPlanner.plan(question);
-        logger.debug("DEBUG: Retrieval plan created - intent: {}, keywords: {}, vector query: {}", 
-                plan.getIntent(), plan.getKeywordQueries(), plan.getVectorQuery());
+        
+        // Log full retrieval plan details
+        logger.info("=== RETRIEVAL PLAN ===");
+        logger.info("  Original query: {}", plan.getOriginalQuery());
+        logger.info("  Detected intent: {}", plan.getIntent());
+        logger.info("  Keyword queries: {}", plan.getKeywordQueries());
+        logger.info("  Vector query: {}", plan.getVectorQuery());
+        logger.info("  Output format: {}", plan.getOutputFormat());
+        logger.info("  Answer instruction: {}", plan.getAnswerInstruction());
 
         if (hybridEnabled) {
             return hybridSearch(plan, topK);
         } else {
             return vectorOnlySearch(plan, topK);
         }
+    }
+
+    /**
+     * Retrieve evidence with retrieval plan metadata.
+     * Returns both the evidence chunks and the retrieval plan for downstream processing.
+     * 
+     * @param question The user's question
+     * @param topK Number of chunks to retrieve
+     * @return Object containing both evidence chunks and retrieval plan
+     */
+    public RetrievalPlan getRetrievalPlan(String question) {
+        return retrievalPlanner.plan(question);
     }
 
     /**
@@ -82,33 +101,51 @@ public class RetrievalService {
      * @return List of merged and reranked evidence chunks
      */
     private List<EvidenceChunk> hybridSearch(RetrievalPlan plan, int topK) {
-        logger.debug("Using hybrid search: topKVector={}, topKKeyword={}, alpha={}", 
-                    topKVector, topKKeyword, hybridAlpha);
+        logger.info("=== HYBRID SEARCH EXECUTION ===");
+        logger.info("  Mode: Hybrid (Vector + Keyword)");
+        logger.info("  TopK Vector: {}, TopK Keyword: {}, Alpha: {}", topKVector, topKKeyword, hybridAlpha);
 
         // Step 1: Generate embedding for vector search using planned vector query
-        logger.debug("DEBUG: Generating embedding for vector query: {}", plan.getVectorQuery());
+        logger.info("Step 1: Vector Search");
+        logger.info("  Vector query: {}", plan.getVectorQuery());
         List<Double> questionEmbedding = openAiClient.generateEmbedding(plan.getVectorQuery());
+        logger.debug("  Embedding dimension: {}", questionEmbedding.size());
         String embeddingVector = convertToVectorString(questionEmbedding);
 
         // Step 2: Execute vector search
-        logger.debug("Executing vector search");
         List<EvidenceChunk> vectorResults = chunkRepository.searchByVector(embeddingVector, topKVector);
-        logger.debug("Vector search returned {} results", vectorResults.size());
+        logger.info("  Vector search results: {} hits", vectorResults.size());
+        if (!vectorResults.isEmpty()) {
+            logger.debug("  Top vector hit - chunk: {}, score: {}", 
+                    vectorResults.get(0).chunkId(), vectorResults.get(0).vectorScore());
+        }
 
         // Step 3: Execute keyword search using planned keyword queries
-        logger.debug("Executing keyword search with {} keyword queries", plan.getKeywordQueries().size());
+        logger.info("Step 2: Keyword Search");
+        logger.info("  Keyword queries ({} total): {}", plan.getKeywordQueries().size(), plan.getKeywordQueries());
         List<EvidenceChunk> keywordResults = searchByKeywordQueries(plan.getKeywordQueries(), topKKeyword);
-        logger.debug("Keyword search returned {} results", keywordResults.size());
+        logger.info("  Keyword search results: {} hits (after dedup)", keywordResults.size());
+        if (!keywordResults.isEmpty()) {
+            logger.debug("  Top keyword hit - chunk: {}, score: {}", 
+                    keywordResults.get(0).chunkId(), keywordResults.get(0).keywordScore());
+        }
 
         // Step 4: Merge results by chunk_id
+        logger.info("Step 3: Merge & Deduplication");
         Map<Long, EvidenceChunk> mergedMap = mergeResults(vectorResults, keywordResults);
-        logger.debug("After merge: {} unique chunks", mergedMap.size());
+        logger.info("  Merged unique chunks: {} (vector: {}, keyword: {}, overlap: {})",
+                mergedMap.size(), vectorResults.size(), keywordResults.size(),
+                vectorResults.size() + keywordResults.size() - mergedMap.size());
 
         // Step 5: Normalize and fuse scores
+        logger.info("Step 4: Score Normalization & Fusion");
         List<EvidenceChunk> fusedChunks = normalizeAndFuseScores(new ArrayList<>(mergedMap.values()));
+        logger.debug("  Score fusion alpha: {} (vector weight) + {} (keyword weight)",
+                hybridAlpha, (1.0 - hybridAlpha));
 
         // Step 6: Sort by finalScore and return top-K with citations
-        return fusedChunks.stream()
+        logger.info("Step 5: Final Ranking");
+        List<EvidenceChunk> finalResults = fusedChunks.stream()
             .sorted((a, b) -> Double.compare(b.finalScore(), a.finalScore()))
             .limit(topK)
             .map(chunk -> new EvidenceChunk(
@@ -125,6 +162,18 @@ public class RetrievalService {
                 chunk.finalScore()
             ))
             .toList();
+        
+        logger.info("  Final ranked results: {} chunks (limit: {})", finalResults.size(), topK);
+        if (!finalResults.isEmpty()) {
+            logger.info("  Top result - chunk: {}, vector: {}, keyword: {}, final: {}",
+                    finalResults.get(0).chunkId(),
+                    String.format("%.4f", finalResults.get(0).vectorScore()),
+                    String.format("%.4f", finalResults.get(0).keywordScore()),
+                    String.format("%.4f", finalResults.get(0).finalScore()));
+        }
+        
+        logger.info("=== END HYBRID SEARCH ===");
+        return finalResults;
     }
 
     /**

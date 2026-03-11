@@ -4,6 +4,7 @@ import com.agent.config.AgentProperties;
 import com.agent.model.AgentQueryRequest;
 import com.agent.model.AgentQueryResponse;
 import com.agent.model.EvidenceChunk;
+import com.agent.model.RetrievalPlan;
 import com.agent.model.VerificationReport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +14,7 @@ import java.util.List;
 /**
  * Main orchestration service for the evidence-grounded agent.
  * Coordinates retrieval, drafting, and verification steps.
+ * Uses RetrievalPlanner to optimize queries and pass instructions to drafting stage.
  */
 @Service
 public class AgentService {
@@ -46,16 +48,28 @@ public class AgentService {
      */
     public AgentQueryResponse processQuery(AgentQueryRequest request) {
         long startTime = System.currentTimeMillis();
+        logger.info("=== AGENT PIPELINE START ===");
         logger.info("Processing query: {}", request.question());
 
         try {
-            // Step 1: Retrieval
-            logger.info("Step 1: Retrieving evidence");
+            // Step 1: Create retrieval plan and retrieve evidence
+            logger.info("Step 1: Retrieval Planning & Evidence Retrieval");
             int topK = request.topK() != null ? request.topK() : agentProperties.getDefaultTopK();
+            
+            // Get the retrieval plan
+            RetrievalPlan plan = retrievalService.getRetrievalPlan(request.question());
+            logger.info("  Retrieval Plan Generated:");
+            logger.info("    Intent: {}", plan.getIntent());
+            logger.info("    Keyword queries: {}", plan.getKeywordQueries());
+            logger.info("    Vector query: {}", plan.getVectorQuery());
+            
+            // Retrieve evidence
             List<EvidenceChunk> evidenceChunks = retrievalService.retrieveEvidence(request.question(), topK);
+            logger.info("  Retrieved {} evidence chunks", evidenceChunks.size());
             
             if (evidenceChunks.isEmpty()) {
                 logger.warn("No evidence found for question");
+                logger.info("=== AGENT PIPELINE END (NO EVIDENCE) ===");
                 return new AgentQueryResponse(
                     "Unable to answer: No relevant evidence found in the knowledge base.",
                     List.of(),
@@ -64,33 +78,46 @@ public class AgentService {
                 );
             }
 
-            // Step 2: Drafting
-            logger.info("Step 2: Drafting answer with {} evidence chunks", evidenceChunks.size());
-            String draftedAnswer = draftingService.draftAnswer(request.question(), evidenceChunks);
+            // Step 2: Drafting with answer instruction from retrieval plan
+            logger.info("Step 2: Answer Drafting");
+            logger.info("  Using answer instruction: {}", plan.getAnswerInstruction());
+            String draftedAnswer = draftingService.draftAnswer(
+                request.question(), 
+                evidenceChunks, 
+                plan.getAnswerInstruction()
+            );
+            logger.info("  Draft answer length: {}", draftedAnswer.length());
 
             // Step 3: Verification
-            logger.info("Step 3: Verifying citations");
+            logger.info("Step 3: Citation Verification");
             VerificationReport verification = verificationService.verify(draftedAnswer);
+            logger.info("  Verification passed: {}", verification.passed());
+            logger.info("  Missing citations: {}", verification.missingCitationLines().size());
             String finalAnswer = draftedAnswer;
 
             // Step 4: Repair (if enabled and verification failed)
             if (!verification.passed() && agentProperties.getVerification().isRepairEnabled()) {
-                logger.info("Step 4: Repairing answer due to missing citations");
+                logger.info("Step 4: Answer Repair");
                 String repairedAnswer = verificationService.repairAnswer(
                     draftedAnswer,
                     request.question(),
                     verification.missingCitationLines(),
                     openAiClient
                 );
+                logger.info("  Repaired answer length: {}", repairedAnswer.length());
                 finalAnswer = repairedAnswer;
                 
                 // Re-verify after repair
                 verification = verificationService.verify(repairedAnswer);
-                logger.info("After repair verification: passed={}", verification.passed());
+                logger.info("  After repair verification: passed={}", verification.passed());
+                logger.info("  Remaining missing citations: {}", verification.missingCitationLines().size());
+            } else {
+                logger.info("Step 4: Repair Skipped (verification passed or repair disabled)");
             }
 
             long processingTime = System.currentTimeMillis() - startTime;
-            logger.info("Query processed successfully in {} ms", processingTime);
+            logger.info("=== AGENT PIPELINE END (SUCCESS) ===");
+            logger.info("Total processing time: {} ms", processingTime);
 
             return new AgentQueryResponse(
                 finalAnswer,

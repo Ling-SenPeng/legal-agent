@@ -30,11 +30,27 @@ public class DraftingService {
      * @return The drafted answer with citations
      */
     public String draftAnswer(String question, List<EvidenceChunk> evidenceChunks) {
+        return draftAnswer(question, evidenceChunks, null);
+    }
+
+    /**
+     * Draft an answer based on the provided evidence with optional answer instruction.
+     * Enforces strict citation requirements in the prompt.
+     * 
+     * @param question The original question
+     * @param evidenceChunks The retrieved evidence chunks
+     * @param answerInstruction Optional instruction on how to format the answer (from RetrievalPlan)
+     * @return The drafted answer with citations
+     */
+    public String draftAnswer(String question, List<EvidenceChunk> evidenceChunks, String answerInstruction) {
         logger.info("Drafting answer for question: {}", question);
+        if (answerInstruction != null) {
+            logger.info("Using answer instruction: {}", answerInstruction);
+        }
         logger.debug("Using {} evidence chunks", evidenceChunks.size());
 
         String systemMessage = buildSystemPrompt();
-        String userMessage = buildUserMessage(question, evidenceChunks);
+        String userMessage = buildUserMessage(question, evidenceChunks, answerInstruction);
 
         String draftedAnswer = openAiClient.chatCompletion(systemMessage, userMessage);
         logger.debug("Draft answer generated, length: {}", draftedAnswer.length());
@@ -70,7 +86,19 @@ public class DraftingService {
      * Build the user message with the question and evidence.
      */
     private String buildUserMessage(String question, List<EvidenceChunk> evidenceChunks) {
+        return buildUserMessage(question, evidenceChunks, null);
+    }
+
+    /**
+     * Build the user message with the question, evidence, and optional answer instruction.
+     */
+    private String buildUserMessage(String question, List<EvidenceChunk> evidenceChunks, String answerInstruction) {
         StringBuilder sb = new StringBuilder();
+        
+        // Add answer instruction if provided
+        if (answerInstruction != null && !answerInstruction.isEmpty()) {
+            sb.append("ANSWER INSTRUCTION: ").append(answerInstruction).append("\n\n");
+        }
         
         sb.append("QUESTION: ").append(question).append("\n\n");
         
