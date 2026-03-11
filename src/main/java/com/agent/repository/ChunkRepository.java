@@ -192,6 +192,46 @@ public class ChunkRepository {
     }
 
     /**
+     * Find a specific chunk by chunk ID.
+     * Used for neighbor chunk expansion in timeline queries.
+     * 
+     * @param chunkId The ID of the chunk to find
+     * @return List with single chunk if found, empty list otherwise
+     */
+    public List<EvidenceChunk> findByChunkId(Long chunkId) {
+        String query = """
+            SELECT 
+                c.id as chunk_id,
+                c.doc_id,
+                c.page_no,
+                c.page_no as page_start,
+                c.page_no as page_end,
+                c.text,
+                0.0 as similarity
+            FROM pdf_chunks c
+            WHERE c.id = ?
+            """;
+
+        return jdbcTemplate.query(
+            query,
+            (rs, rowNum) -> new EvidenceChunk(
+                rs.getLong("chunk_id"),
+                rs.getLong("doc_id"),
+                rs.getInt("page_no"),
+                rs.getInt("page_start"),
+                rs.getInt("page_end"),
+                rs.getString("text"),
+                rs.getDouble("similarity"),
+                "",
+                null,
+                null,
+                null
+            ),
+            chunkId
+        );
+    }
+
+    /**
      * Update embedding for a specific chunk.
      */
     public void updateChunkEmbedding(Long chunkId, String embeddingVector) {
