@@ -1,6 +1,7 @@
 package com.agent.service;
 
 import com.agent.model.EvidenceChunk;
+import com.agent.model.RetrievalPlan;
 import com.agent.repository.ChunkRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,6 +12,7 @@ import java.util.*;
 /**
  * Service for retrieving relevant evidence chunks from the database.
  * Supports both vector-only and hybrid (vector + keyword) search modes.
+ * Uses RetrievalPlanner to optimize queries before searching.
  */
 @Service
 public class RetrievalService {
@@ -18,6 +20,7 @@ public class RetrievalService {
     
     private final ChunkRepository chunkRepository;
     private final OpenAiClient openAiClient;
+    private final RetrievalPlanner retrievalPlanner;
     
     @Value("${hybrid.enabled:true}")
     private boolean hybridEnabled;
@@ -31,13 +34,16 @@ public class RetrievalService {
     @Value("${hybrid.alpha:0.6}")
     private double hybridAlpha;
 
-    public RetrievalService(ChunkRepository chunkRepository, OpenAiClient openAiClient) {
+    public RetrievalService(ChunkRepository chunkRepository, OpenAiClient openAiClient,
+                            RetrievalPlanner retrievalPlanner) {
         this.chunkRepository = chunkRepository;
         this.openAiClient = openAiClient;
+        this.retrievalPlanner = retrievalPlanner;
     }
 
     /**
      * Retrieve top-K most relevant evidence chunks for a given question.
+     * Uses RetrievalPlanner to optimize the query before searching.
      * Uses hybrid search (vector + keyword) by default if configured.
      * 
      * @param question The user's question
@@ -46,11 +52,17 @@ public class RetrievalService {
      */
     public List<EvidenceChunk> retrieveEvidence(String question, int topK) {
         logger.info("Retrieving {} evidence chunks for question: {}", topK, question);
+        logger.debug("DEBUG: Creating retrieval plan from question");
+        
+        // Step 1: Generate retrieval plan
+        RetrievalPlan plan = retrievalPlanner.plan(question);
+        logger.debug("DEBUG: Retrieval plan created - intent: {}, keywords: {}, vector query: {}", 
+                plan.getIntent(), plan.getKeywordQueries(), plan.getVectorQuery());
 
         if (hybridEnabled) {
-            return hybridSearch(question, topK);
+            return hybridSearch(plan, topK);
         } else {
-            return vectorOnlySearch(question, topK);
+            return vectorOnlySearch(plan, topK);
         }
     }
 
@@ -58,23 +70,24 @@ public class RetrievalService {
      * Hybrid search: Merge vector and keyword search results with score fusion.
      * 
      * Algorithm:
-     * 1. Retrieve topKVector results from vector search
-     * 2. Retrieve topKKeyword results from keyword search
+     * 1. Retrieve topKVector results from vector search using planned vector query
+     * 2. Retrieve topKKeyword results from keyword search using planned keyword queries
      * 3. Merge by chunk_id (dedupe)
      * 4. Normalize scores to [0,1] within each candidate list
      * 5. Compute finalScore = alpha * vectorNorm + (1-alpha) * keywordNorm
      * 6. Sort by finalScore desc and return top-K
      * 
-     * @param question The user's question
+     * @param plan The retrieval plan with optimized queries
      * @param topK Number of chunks to return
      * @return List of merged and reranked evidence chunks
      */
-    private List<EvidenceChunk> hybridSearch(String question, int topK) {
+    private List<EvidenceChunk> hybridSearch(RetrievalPlan plan, int topK) {
         logger.debug("Using hybrid search: topKVector={}, topKKeyword={}, alpha={}", 
                     topKVector, topKKeyword, hybridAlpha);
 
-        // Step 1: Generate embedding for vector search
-        List<Double> questionEmbedding = openAiClient.generateEmbedding(question);
+        // Step 1: Generate embedding for vector search using planned vector query
+        logger.debug("DEBUG: Generating embedding for vector query: {}", plan.getVectorQuery());
+        List<Double> questionEmbedding = openAiClient.generateEmbedding(plan.getVectorQuery());
         String embeddingVector = convertToVectorString(questionEmbedding);
 
         // Step 2: Execute vector search
@@ -82,9 +95,9 @@ public class RetrievalService {
         List<EvidenceChunk> vectorResults = chunkRepository.searchByVector(embeddingVector, topKVector);
         logger.debug("Vector search returned {} results", vectorResults.size());
 
-        // Step 3: Execute keyword search
-        logger.debug("Executing keyword search");
-        List<EvidenceChunk> keywordResults = chunkRepository.searchByKeyword(question, topKKeyword);
+        // Step 3: Execute keyword search using planned keyword queries
+        logger.debug("Executing keyword search with {} keyword queries", plan.getKeywordQueries().size());
+        List<EvidenceChunk> keywordResults = searchByKeywordQueries(plan.getKeywordQueries(), topKKeyword);
         logger.debug("Keyword search returned {} results", keywordResults.size());
 
         // Step 4: Merge results by chunk_id
@@ -117,11 +130,12 @@ public class RetrievalService {
     /**
      * Vector-only search (fallback when hybrid disabled).
      */
-    private List<EvidenceChunk> vectorOnlySearch(String question, int topK) {
-        logger.debug("Using vector-only search");
+    private List<EvidenceChunk> vectorOnlySearch(RetrievalPlan plan, int topK) {
+        logger.debug("Using vector-only search with planned vector query");
 
-        // Step 1: Generate embedding for the question
-        List<Double> questionEmbedding = openAiClient.generateEmbedding(question);
+        // Step 1: Generate embedding for the planned vector query
+        logger.debug("DEBUG: Generating embedding for vector query: {}", plan.getVectorQuery());
+        List<Double> questionEmbedding = openAiClient.generateEmbedding(plan.getVectorQuery());
         logger.debug("Question embedding generated, dimension: {}", questionEmbedding.size());
 
         // Step 2: Convert to vector string representation and search
@@ -145,6 +159,45 @@ public class RetrievalService {
                 null
             ))
             .toList();
+    }
+
+    /**
+     * Perform keyword search with multiple keyword queries.
+     * Combines results from all keyword queries, deduplicating by chunk_id.
+     */
+    private List<EvidenceChunk> searchByKeywordQueries(List<String> keywordQueries, int topK) {
+        if (keywordQueries.isEmpty()) {
+            logger.warn("No keyword queries provided for keyword search");
+            return List.of();
+        }
+
+        Map<Long, EvidenceChunk> combinedResults = new LinkedHashMap<>();
+
+        for (String query : keywordQueries) {
+            logger.debug("Executing keyword search with query: {}", query);
+            List<EvidenceChunk> results = chunkRepository.searchByKeyword(query, topK);
+            
+            // Add results, keeping highest scoring version of each chunk
+            for (EvidenceChunk chunk : results) {
+                Long chunkId = chunk.chunkId();
+                if (!combinedResults.containsKey(chunkId)) {
+                    combinedResults.put(chunkId, chunk);
+                } else {
+                    // Keep the higher scoring version
+                    EvidenceChunk existing = combinedResults.get(chunkId);
+                    if (chunk.keywordScore() != null && existing.keywordScore() != null) {
+                        if (chunk.keywordScore() > existing.keywordScore()) {
+                            combinedResults.put(chunkId, chunk);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Return up to topK combined unique results
+        return combinedResults.values().stream()
+                .limit(topK)
+                .toList();
     }
 
     /**

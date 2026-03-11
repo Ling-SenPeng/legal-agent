@@ -102,7 +102,7 @@ export JDBC_PASSWORD="postgres"
 
 export OPENAI_API_KEY="sk-..."
 export OPENAI_MODEL="gpt-4-mini"
-export OPENAI_EMBEDDING_MODEL="text-embedding-3-large"
+export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
 ```
 
 ### 3. Build & Run
@@ -354,7 +354,7 @@ Edit `src/main/resources/application.yml`:
 openai:
   api-key: ${OPENAI_API_KEY}
   model: ${OPENAI_MODEL:gpt-4-mini}
-  embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-large}
+  embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
   timeout-ms: 30000
 
 agent:
