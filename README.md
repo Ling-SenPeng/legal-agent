@@ -434,7 +434,7 @@ psql -h localhost -U postgres -d legal_agent
 
 ## Next Steps (Production Hardening)
 
-1. Implement batch embedding ingestion for large document sets
+1. Implement batch embedding injestion for large document sets
 2. Add hybrid search (semantic + keyword matching with BM25)
 3. Implement RAG-specific metrics (answer quality, citation coverage)
 4. Add support for multi-case queries

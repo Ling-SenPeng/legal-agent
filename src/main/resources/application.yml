@@ -3,9 +3,9 @@ spring:
     name: legal-agent
   
   datasource:
-    url: jdbc:postgresql://localhost:5432/legal_ingestion
-    username: ingestion_user
-    password: ingestion_pass
+    url: jdbc:postgresql://localhost:5432/legal_injestion
+    username: injestion_user
+    password: injestion_pass
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 20

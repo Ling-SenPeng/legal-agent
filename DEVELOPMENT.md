@@ -330,7 +330,7 @@ SELECT array_length(embedding, 1) FROM pdf_chunks LIMIT 1;
 ## Next Steps & Roadmap
 
 **MVP+** (Next iteration):
-1. Batch embedding ingestion endpoint
+1. Batch embedding injestion endpoint
 2. Multi-document support
 3. Hybrid search (semantic + keyword with BM25)
 4. Query-specific filters (date ranges, keywords)
