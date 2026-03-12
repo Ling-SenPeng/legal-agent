@@ -31,19 +31,31 @@ public class RuleBasedCaseAnalysisContextBuilder implements CaseAnalysisContextB
     }
 
     /**
-     * Build case analysis context from query and evidence.
+     * Build case analysis context from pre-extracted issues and evidence.
      * 
-     * @param caseQuery The case question
+     * Receives issues that have already been extracted by CaseIssueExtractor
+     * to ensure consistency across the pipeline and avoid recomputation.
+     * 
+     * @param originalQuery The user's original case question
+     * @param cleanedQuery The case question after noise removal
+     * @param identifiedIssues Pre-extracted legal issues
      * @param evidenceChunks Retrieved evidence
      * @return Complete CaseAnalysisContext with issues, facts, and missing facts
      */
     @Override
-    public CaseAnalysisContext buildContext(String caseQuery, List<EvidenceChunk> evidenceChunks) {
-        logger.info("Building case analysis context for query: {}", caseQuery);
+    public CaseAnalysisContext buildContext(
+        String originalQuery,
+        String cleanedQuery,
+        List<CaseIssue> identifiedIssues,
+        List<EvidenceChunk> evidenceChunks
+    ) {
+        logger.info("Building case analysis context for query: {}", originalQuery);
+        logger.debug("Cleaned query: {}", cleanedQuery);
+        logger.debug("Using pre-extracted issues: {} identified", identifiedIssues.size());
         
-        // Step 1: Extract issues from query
-        List<CaseIssue> issues = issueExtractor.extractIssues(caseQuery);
-        logger.info("Identified {} legal issues", issues.size());
+        // Step 1: Use pre-extracted issues (no recomputation)
+        List<CaseIssue> issues = identifiedIssues;
+        logger.info("Using {} pre-identified legal issues", issues.size());
         
         // Step 2: Extract facts from evidence
         List<CaseFact> extractedFacts = new ArrayList<>();
@@ -64,9 +76,9 @@ public class RuleBasedCaseAnalysisContextBuilder implements CaseAnalysisContextB
         // Step 5: Generate legal standard summary
         String standardSummary = generateLegalStandardSummary(issues);
         
-        // Step 6: Build context
+        // Step 6: Build context with original query
         CaseAnalysisContext context = new CaseAnalysisContext(
-            caseQuery,
+            originalQuery,
             issues,
             allFacts,
             standardSummary

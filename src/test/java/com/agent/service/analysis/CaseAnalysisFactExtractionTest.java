@@ -180,11 +180,8 @@ class CaseAnalysisFactExtractionTest {
             "reimbursement"
         );
         
-        when(mockIssueExtractor.extractIssues(query))
-            .thenReturn(List.of(reimbursement));
-        
         // When
-        CaseAnalysisContext context = contextBuilder.buildContext(query, List.of(chunk));
+        CaseAnalysisContext context = contextBuilder.buildContext(query, query, List.of(reimbursement), List.of(chunk));
         
         // Then
         assertNotNull(context.getRelevantFacts());
@@ -224,11 +221,8 @@ class CaseAnalysisFactExtractionTest {
             "tracing"
         );
         
-        when(mockIssueExtractor.extractIssues(query))
-            .thenReturn(List.of(tracing));
-        
         // When
-        CaseAnalysisContext context = contextBuilder.buildContext(query, List.of(chunk));
+        CaseAnalysisContext context = contextBuilder.buildContext(query, query, List.of(tracing), List.of(chunk));
         
         // Then
         List<CaseFact> missingFacts = context.getRelevantFacts().stream()
@@ -258,11 +252,8 @@ class CaseAnalysisFactExtractionTest {
             "exclusive use"
         );
         
-        when(mockIssueExtractor.extractIssues(query))
-            .thenReturn(List.of(exclusiveUse));
-        
         // When
-        CaseAnalysisContext context = contextBuilder.buildContext(query, List.of(chunk));
+        CaseAnalysisContext context = contextBuilder.buildContext(query, query, List.of(exclusiveUse), List.of(chunk));
         
         // Then
         List<CaseFact> missingFacts = context.getRelevantFacts().stream()
@@ -292,11 +283,8 @@ class CaseAnalysisFactExtractionTest {
             "custody"
         );
         
-        when(mockIssueExtractor.extractIssues(query))
-            .thenReturn(List.of(custody));
-        
         // When
-        CaseAnalysisContext context = contextBuilder.buildContext(query, List.of(chunk));
+        CaseAnalysisContext context = contextBuilder.buildContext(query, query, List.of(custody), List.of(chunk));
         
         // Then
         List<CaseFact> missingFacts = context.getRelevantFacts().stream()
@@ -328,11 +316,8 @@ class CaseAnalysisFactExtractionTest {
             "reimbursement"
         );
         
-        when(mockIssueExtractor.extractIssues(query))
-            .thenReturn(List.of(issue));
-        
         // When
-        CaseAnalysisContext context = contextBuilder.buildContext(query, List.of(chunk));
+        CaseAnalysisContext context = contextBuilder.buildContext(query, query, List.of(issue), List.of(chunk));
         
         // Then
         assertNotNull(context);
@@ -359,11 +344,8 @@ class CaseAnalysisFactExtractionTest {
             "property"
         );
         
-        when(mockIssueExtractor.extractIssues(query))
-            .thenReturn(List.of(issue));
-        
         // When
-        CaseAnalysisContext context = contextBuilder.buildContext(query, List.of(chunk));
+        CaseAnalysisContext context = contextBuilder.buildContext(query, query, List.of(issue), List.of(chunk));
         
         // Then
         assertTrue(context.getLegalStandardSummary().contains("Community property") ||
@@ -427,11 +409,8 @@ class CaseAnalysisFactExtractionTest {
             "custody"
         );
         
-        when(mockIssueExtractor.extractIssues(query))
-            .thenReturn(List.of(issue1, issue2));
-        
         // When
-        CaseAnalysisContext context = contextBuilder.buildContext(query, List.of(chunk));
+        CaseAnalysisContext context = contextBuilder.buildContext(query, query, List.of(issue1, issue2), List.of(chunk));
         
         // Then
         assertEquals(2, context.getIdentifiedIssues().size());

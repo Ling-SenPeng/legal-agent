@@ -286,7 +286,12 @@ class CaseAnalysisModeHandlerTest {
         }
         
         @Override
-        public CaseAnalysisContext buildContext(String query, List<EvidenceChunk> evidenceChunks) {
+        public CaseAnalysisContext buildContext(
+            String originalQuery,
+            String cleanedQuery,
+            List<CaseIssue> identifiedIssues,
+            List<EvidenceChunk> evidenceChunks
+        ) {
             return context;
         }
     }

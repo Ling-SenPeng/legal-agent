@@ -132,9 +132,14 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             
             // ===== ANALYSIS PHASE =====
             
-            // Step 5: Build analysis context (orchestrates fact extraction, missing fact identification)
+            // Step 5: Build analysis context (uses pre-extracted issues and evidence)
             logger.debug("[CASE_ANALYSIS] Step 5: Building case analysis context");
-            CaseAnalysisContext context = contextBuilder.buildContext(query, mergedEvidenceChunks);
+            CaseAnalysisContext context = contextBuilder.buildContext(
+                query, 
+                cleanedQuery,
+                issues,
+                mergedEvidenceChunks
+            );
             
             logger.info("[CASE_ANALYSIS] Context built with {} issues and {} facts",
                 context.getIdentifiedIssues().size(),
