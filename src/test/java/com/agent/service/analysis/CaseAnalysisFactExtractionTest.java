@@ -188,17 +188,13 @@ class CaseAnalysisFactExtractionTest {
         assertTrue(context.getRelevantFacts().size() >= 1, 
             "Should have at least 1 extracted fact");
         
-        // Check for missing facts (facts with descriptions starting with [NEEDED FACT])
-        List<CaseFact> allRelevantFacts = context.getRelevantFacts();
-        List<CaseFact> neededFacts = allRelevantFacts.stream()
-            .filter(f -> f.getDescription() != null && f.getDescription().startsWith("[NEEDED FACT]"))
-            .toList();
+        // Check for missing facts
+        List<MissingFact> missingFacts = context.getMissingFacts();
+        assertTrue(missingFacts.size() > 0, 
+            "Should have identified missing facts. Total extracted facts: " + context.getRelevantFacts().size() + 
+            ", missing facts: " + missingFacts.size());
         
-        assertTrue(neededFacts.size() > 0, 
-            "Should have identified missing facts. Total facts: " + allRelevantFacts.size() + 
-            ", facts with [NEEDED FACT]: " + neededFacts.size());
-        
-        assertTrue(neededFacts.stream().anyMatch(f ->
+        assertTrue(missingFacts.stream().anyMatch(f ->
             f.getDescription().toLowerCase().contains("timeline") ||
             f.getDescription().toLowerCase().contains("source")
         ));
@@ -225,10 +221,7 @@ class CaseAnalysisFactExtractionTest {
         CaseAnalysisContext context = contextBuilder.buildContext(query, query, List.of(tracing), List.of(chunk));
         
         // Then
-        List<CaseFact> missingFacts = context.getRelevantFacts().stream()
-            .filter(f -> f.getDescription().startsWith("[NEEDED FACT]"))
-            .toList();
-        
+        List<MissingFact> missingFacts = context.getMissingFacts();
         assertTrue(missingFacts.stream().anyMatch(f ->
             f.getDescription().contains("documentation") ||
             f.getDescription().contains("separate property")
@@ -256,10 +249,7 @@ class CaseAnalysisFactExtractionTest {
         CaseAnalysisContext context = contextBuilder.buildContext(query, query, List.of(exclusiveUse), List.of(chunk));
         
         // Then
-        List<CaseFact> missingFacts = context.getRelevantFacts().stream()
-            .filter(f -> f.getDescription().startsWith("[NEEDED FACT]"))
-            .toList();
-        
+        List<MissingFact> missingFacts = context.getMissingFacts();
         assertTrue(missingFacts.stream().anyMatch(f ->
             f.getDescription().contains("occupancy") ||
             f.getDescription().contains("rental value")
@@ -287,10 +277,7 @@ class CaseAnalysisFactExtractionTest {
         CaseAnalysisContext context = contextBuilder.buildContext(query, query, List.of(custody), List.of(chunk));
         
         // Then
-        List<CaseFact> missingFacts = context.getRelevantFacts().stream()
-            .filter(f -> f.getDescription().startsWith("[NEEDED FACT]"))
-            .toList();
-        
+        List<MissingFact> missingFacts = context.getMissingFacts();
         assertTrue(missingFacts.stream().anyMatch(f ->
             f.getDescription().contains("parenting schedule") ||
             f.getDescription().contains("school")

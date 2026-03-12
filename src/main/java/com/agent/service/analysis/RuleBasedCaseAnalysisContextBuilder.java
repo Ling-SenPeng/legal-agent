@@ -66,26 +66,23 @@ public class RuleBasedCaseAnalysisContextBuilder implements CaseAnalysisContextB
         logger.info("Extracted {} case facts from evidence", extractedFacts.size());
         
         // Step 3: Identify missing facts for each issue type
-        List<CaseFact> missingFacts = identifyMissingFacts(issues, extractedFacts);
+        List<MissingFact> missingFacts = identifyMissingFacts(issues, extractedFacts);
         logger.info("Identified {} missing or needed facts", missingFacts.size());
         
-        // Step 4: Combine facts (extracted + missing)
-        List<CaseFact> allFacts = new ArrayList<>(extractedFacts);
-        allFacts.addAll(missingFacts);
-        
-        // Step 5: Generate legal standard summary
+        // Step 4: Generate legal standard summary
         String standardSummary = generateLegalStandardSummary(issues);
         
-        // Step 6: Build context with original query
+        // Step 5: Build context with retrieved and missing facts separated
         CaseAnalysisContext context = new CaseAnalysisContext(
             originalQuery,
             issues,
-            allFacts,
+            extractedFacts,  // Only retrieved facts, not combined
+            missingFacts,    // Missing facts stored separately
             standardSummary
         );
         
-        logger.info("Context built: {} issues, {} facts, summary length: {}",
-            issues.size(), allFacts.size(), standardSummary.length());
+        logger.info("Context built: {} issues, {} retrieved facts, {} missing facts, summary length: {}",
+            issues.size(), extractedFacts.size(), missingFacts.size(), standardSummary.length());
         
         return context;
     }
@@ -97,10 +94,10 @@ public class RuleBasedCaseAnalysisContextBuilder implements CaseAnalysisContextB
      * 
      * @param issues Identified legal issues
      * @param extractedFacts Facts already found in evidence
-     * @return List of missing/needed CaseFact objects
+     * @return List of missing facts
      */
-    private List<CaseFact> identifyMissingFacts(List<CaseIssue> issues, List<CaseFact> extractedFacts) {
-        List<CaseFact> missingFacts = new ArrayList<>();
+    private List<MissingFact> identifyMissingFacts(List<CaseIssue> issues, List<CaseFact> extractedFacts) {
+        List<MissingFact> missingFacts = new ArrayList<>();
         String combinedFacts = extractedFacts.stream()
             .map(CaseFact::getDescription)
             .collect(Collectors.joining(" "))
@@ -118,15 +115,14 @@ public class RuleBasedCaseAnalysisContextBuilder implements CaseAnalysisContextB
                 logger.info("  Needed fact '{}' - available: {}", neededFact, available);
                 
                 if (!available) {
-                    // Create placeholder missing fact
-                    CaseFact missingFact = new CaseFact(
-                        "[NEEDED FACT] " + neededFact,
-                        false,  // Mark as not yet favorable
-                        "[Missing from evidence]",
-                        issue.getType()
+                    // Create missing fact entry
+                    MissingFact missing = new MissingFact(
+                        neededFact,
+                        issue.getType(),
+                        "Not found in available evidence"
                     );
-                    missingFacts.add(missingFact);
-                    logger.info("    ADDED MISSING FACT: {}", missingFact.getDescription());
+                    missingFacts.add(missing);
+                    logger.info("    ADDED MISSING FACT: {}", missing.getDescription());
                 }
             }
         }

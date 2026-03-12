@@ -12,18 +12,34 @@ public class CaseAnalysisContext {
     private final String caseQuery;
     private final List<CaseIssue> identifiedIssues;
     private final List<CaseFact> relevantFacts;
+    private final List<MissingFact> missingFacts;  // Facts needed but not found in evidence
     private final String legalStandardSummary;  // Relevant legal standards/authorities
 
     public CaseAnalysisContext(
         String caseQuery,
         List<CaseIssue> identifiedIssues,
         List<CaseFact> relevantFacts,
+        List<MissingFact> missingFacts,
         String legalStandardSummary
     ) {
         this.caseQuery = caseQuery;
         this.identifiedIssues = identifiedIssues;
         this.relevantFacts = relevantFacts;
+        this.missingFacts = missingFacts;
         this.legalStandardSummary = legalStandardSummary;
+    }
+    
+    /**
+     * Convenience constructor for backwards compatibility.
+     * Creates context with empty missing facts list.
+     */
+    public CaseAnalysisContext(
+        String caseQuery,
+        List<CaseIssue> identifiedIssues,
+        List<CaseFact> relevantFacts,
+        String legalStandardSummary
+    ) {
+        this(caseQuery, identifiedIssues, relevantFacts, List.of(), legalStandardSummary);
     }
 
     public String getCaseQuery() {
@@ -38,6 +54,10 @@ public class CaseAnalysisContext {
         return relevantFacts;
     }
 
+    public List<MissingFact> getMissingFacts() {
+        return missingFacts;
+    }
+
     public String getLegalStandardSummary() {
         return legalStandardSummary;
     }
@@ -47,6 +67,7 @@ public class CaseAnalysisContext {
         return "CaseAnalysisContext{" +
                 "issues=" + identifiedIssues.size() +
                 ", facts=" + relevantFacts.size() +
+                ", missingFacts=" + missingFacts.size() +
                 '}';
     }
 }

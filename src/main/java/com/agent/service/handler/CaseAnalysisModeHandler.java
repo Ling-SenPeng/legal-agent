@@ -249,6 +249,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         List<CaseIssue> issues = context.getIdentifiedIssues();
         List<CaseFact> facts = context.getRelevantFacts();
+        List<MissingFact> missingFactsList = context.getMissingFacts();
         
         // Count favorable vs unfavorable facts
         long favorableFacts = facts.stream()
@@ -257,9 +258,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         long unfavorableFacts = facts.stream()
             .filter(f -> !f.isFavorable())
             .count();
-        long missingFacts = facts.stream()
-            .filter(f -> f.getDescription().startsWith("[NEEDED FACT]"))
-            .count();
+        long missingFacts = missingFactsList.size();
         
         logger.debug("[CASE_ANALYSIS] Fact analysis - Favorable: {}, Unfavorable: {}, Missing: {}",
             favorableFacts, unfavorableFacts, missingFacts);
@@ -359,13 +358,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private String buildAnalysisNarrative(CaseAnalysisContext context, CaseAnalysisResult.StrengthLevel strengthLevel) {
         StringBuilder narrative = new StringBuilder();
         
-        // Count facts by type
-        List<CaseFact> extractedFacts = context.getRelevantFacts().stream()
-            .filter(f -> !f.getDescription().startsWith("[NEEDED FACT]"))
-            .toList();
-        List<CaseFact> missingFacts = context.getRelevantFacts().stream()
-            .filter(f -> f.getDescription().startsWith("[NEEDED FACT]"))
-            .toList();
+        // Use actual retrieved facts (not missing facts)
+        List<CaseFact> extractedFacts = context.getRelevantFacts();
+        List<MissingFact> missingFacts = context.getMissingFacts();
         
         long favorableCount = extractedFacts.stream().filter(CaseFact::isFavorable).count();
         long unfavorableCount = extractedFacts.stream().filter(f -> !f.isFavorable()).count();
@@ -406,17 +401,15 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private String buildRecommendations(CaseAnalysisContext context, CaseAnalysisResult.StrengthLevel strengthLevel) {
         StringBuilder recommendations = new StringBuilder();
         
-        // Recommend collecting missing facts
-        List<CaseFact> missingFacts = context.getRelevantFacts().stream()
-            .filter(f -> f.getDescription().startsWith("[NEEDED FACT]"))
-            .toList();
+        // Use separate missing facts list
+        List<MissingFact> missingFacts = context.getMissingFacts();
         
         if (!missingFacts.isEmpty()) {
             recommendations.append("Priority actions to strengthen the case:\n");
             missingFacts.stream()
                 .limit(3)
                 .forEach(fact -> recommendations.append("- Locate: ")
-                    .append(fact.getDescription().replace("[NEEDED FACT] ", ""))
+                    .append(fact.getDescription())
                     .append("\n"));
         }
         
@@ -466,7 +459,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         // Favorable facts
         List<CaseFact> favorableFacts = context.getRelevantFacts().stream()
-            .filter(f -> !f.getDescription().startsWith("[NEEDED FACT]") && f.isFavorable())
+            .filter(CaseFact::isFavorable)
             .toList();
         if (!favorableFacts.isEmpty()) {
             answer.append("Supporting Facts:\n");
@@ -477,7 +470,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         // Unfavorable facts
         List<CaseFact> unfavorableFacts = context.getRelevantFacts().stream()
-            .filter(f -> !f.getDescription().startsWith("[NEEDED FACT]") && !f.isFavorable())
+            .filter(f -> !f.isFavorable())
             .toList();
         if (!unfavorableFacts.isEmpty()) {
             answer.append("\nChallenging Facts:\n");
@@ -496,13 +489,11 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         answer.append("MISSING EVIDENCE\n");
         answer.append("---\n");
-        List<CaseFact> missingFacts = context.getRelevantFacts().stream()
-            .filter(f -> f.getDescription().startsWith("[NEEDED FACT]"))
-            .toList();
+        List<MissingFact> missingFacts = context.getMissingFacts();
         if (missingFacts.isEmpty()) {
             answer.append("All critical facts appear to be documented.\n\n");
         } else {
-            for (CaseFact fact : missingFacts) {
+            for (MissingFact fact : missingFacts) {
                 answer.append("- ").append(fact.getDescription()).append("\n");
             }
             answer.append("\n");
@@ -537,7 +528,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      */
     private String counterclaim(CaseAnalysisContext context, CaseAnalysisResult.StrengthLevel strengthLevel) {
         List<CaseFact> unfavorableFacts = context.getRelevantFacts().stream()
-            .filter(f -> !f.isFavorable() && !f.getDescription().startsWith("[NEEDED FACT]"))
+            .filter(f -> !f.isFavorable())
             .toList();
         
         if (unfavorableFacts.isEmpty()) {

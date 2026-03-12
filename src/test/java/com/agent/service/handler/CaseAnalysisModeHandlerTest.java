@@ -112,11 +112,14 @@ class CaseAnalysisModeHandlerTest {
         
         List<CaseFact> facts = List.of(
             new CaseFact("I work stable hours", true, "source", LegalIssueType.CUSTODY),
-            new CaseFact("Children ages 7 and 10", true, "source", LegalIssueType.CUSTODY),
-            new CaseFact("[NEEDED FACT] Parenting schedule", false, "[Missing]", LegalIssueType.CUSTODY)
+            new CaseFact("Children ages 7 and 10", true, "source", LegalIssueType.CUSTODY)
         );
         
-        CaseAnalysisContext context = new CaseAnalysisContext(query, issues, facts, 
+        List<MissingFact> missingFacts = List.of(
+            new MissingFact("Parenting schedule", LegalIssueType.CUSTODY, "Not found in evidence")
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(query, issues, facts, missingFacts,
             "Best interests standard applies.");
         
         testRetrievalService.setEvidenceChunks(List.of(chunk));
@@ -129,7 +132,7 @@ class CaseAnalysisModeHandlerTest {
         assertTrue(result.isSuccess());
         assertNotNull(result.getMetadata());
         assertTrue(result.getMetadata().contains("Issues: 1"));
-        assertTrue(result.getMetadata().contains("Facts: 3"));
+        assertTrue(result.getMetadata().contains("Facts: 2"));  // Only retrieved facts, not missing
         assertTrue(result.getMetadata().contains("Mode: CASE_ANALYSIS"));
         assertTrue(result.getMetadata().contains("Strength:"));
         assertTrue(result.getMetadata().contains("Confidence:"));
@@ -211,11 +214,14 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("Purchased for $500k", true, "source", LegalIssueType.PROPERTY_CHARACTERIZATION),
-            new CaseFact("[NEEDED FACT] Title status", false, "[Missing]", LegalIssueType.PROPERTY_CHARACTERIZATION)
+            new CaseFact("Purchased for $500k", true, "source", LegalIssueType.PROPERTY_CHARACTERIZATION)
         );
         
-        CaseAnalysisContext context = new CaseAnalysisContext(query, issues, facts,
+        List<MissingFact> missingFacts = List.of(
+            new MissingFact("Title status", LegalIssueType.PROPERTY_CHARACTERIZATION, "Not found in evidence")
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(query, issues, facts, missingFacts,
             "Community property presumption applies.");
         
         testRetrievalService.setEvidenceChunks(List.of(chunk));
@@ -227,7 +233,7 @@ class CaseAnalysisModeHandlerTest {
         // Then
         String answer = result.getAnswer();
         assertTrue(answer.contains("Supporting Facts:"), "Should list supporting facts");
-        assertTrue(answer.contains("NEEDED FACT") || answer.contains("Missing"), 
+        assertTrue(answer.contains("Title status") || answer.contains("Missing"), 
             "Should show missing evidence");
         assertTrue(answer.contains("Priority actions"), "Should provide recommendations");
         assertTrue(answer.contains("PRELIMINARY ANALYSIS ONLY"), "Should have disclaimer");
