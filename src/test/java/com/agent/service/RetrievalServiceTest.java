@@ -12,13 +12,15 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Unit tests for improved retrieval pipeline.
  * 
- * Tests validate:
- * 1. RetrievalPlanner intent detection
+ * Test Coverage:
+ * 1. RetrievalPlan intent detection and structure
  * 2. Keyword search merging and deduplication
  * 3. Exact phrase boost application
  * 4. Event/timeline neighbor expansion
  * 5. Fallback logic for zero-hit scenarios
- * 6. Score formula (keyword weighted + vector + boost)
+ * 6. Scoring formula (keyword × 1.5 + vector × 1.0 + boost)
+ * 7. Timeline vs event intent distinction
+ * 8. Low confidence detection
  * 
  * Note: These are pure logic tests without external dependencies.
  * Integration tests with database would be in separate files.

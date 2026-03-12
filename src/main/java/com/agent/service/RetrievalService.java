@@ -206,12 +206,13 @@ public class RetrievalService {
 
         // Step 7: Expand neighbor chunks for timeline/event queries
         logger.info("Step 6: Neighbor Expansion");
-        List<EvidenceChunk> expandedResults = expandNeighborChunksForTimeline(finalResults, plan.getIntent());
+        NeighborExpansionResult expansionResult = expandNeighborChunksForTimeline(finalResults, plan);
+        List<EvidenceChunk> expandedResults = expansionResult.expandedChunks;
         
         // Create and log structured debug snapshot
         RetrievalDebugSnapshot snapshot = createDebugSnapshot(plan, keywordResults.size(),
                 vectorResults.size(), mergedMap.size(), finalResults);
-        snapshot.setNeighborExpansionUsed(expandedResults.size() > finalResults.size());
+        snapshot.setNeighborExpansionUsed(expansionResult.wasExpanded);
         snapshot.setVectorFallbackUsed(vectorResults.isEmpty() && plan.isFallbackUsed());
         logDebugSnapshot(snapshot);
         
@@ -480,30 +481,58 @@ public class RetrievalService {
     }
 
     /**
+     * Result from neighbor chunk expansion with metadata.
+     */
+    private static class NeighborExpansionResult {
+        final List<EvidenceChunk> expandedChunks;
+        final boolean wasExpanded;
+        final int originalCount;
+        final int neighborsAdded;
+
+        NeighborExpansionResult(List<EvidenceChunk> expandedChunks, boolean wasExpanded,
+                               int originalCount, int neighborsAdded) {
+            this.expandedChunks = expandedChunks;
+            this.wasExpanded = wasExpanded;
+            this.originalCount = originalCount;
+            this.neighborsAdded = neighborsAdded;
+        }
+    }
+
+    /**
      * Expand result set with neighbor chunks for timeline/event queries.
      * 
-     * Rationale: Event queries benefit from broader context (what happened before/after).
-     * For each top result, include ±1 adjacent chunks to provide timeline context.
+     * Activation conditions (checked in priority order):
+     * 1. NEIGHBOR_EXPANSION_ENABLED constant is true
+     * 2. RetrievalPlan intent is "extract_events" OR outputFormat is "timeline"
      * 
-     * Example: If query extracts "TRO issued on Jan 5", including chunks from Jan 4-6
-     * provides richer narrative context.
+     * Deduplication:
+     * - Maintain original top results first (preserves ranking)
+     * - Add neighbors only if not already in result set
+     * - Uses LinkedHashMap to preserve insertion order
      * 
-     * @param topResults The top results from hybrid search
-     * @param intent The detected query intent (e.g., "extract_events")
-     * @return Expanded result set with neighbor chunks
+     * @param topResults The top-K ranked chunks from hybrid search
+     * @param plan The retrieval plan (contains intent and outputFormat)
+     * @return NeighborExpansionResult with expanded chunks and metadata
      */
-    private List<EvidenceChunk> expandNeighborChunksForTimeline(List<EvidenceChunk> topResults,
-                                                               String intent) {
+    private NeighborExpansionResult expandNeighborChunksForTimeline(List<EvidenceChunk> topResults,
+                                                                   RetrievalPlan plan) {
+        // Check if expansion is enabled and applicable
         if (!NEIGHBOR_EXPANSION_ENABLED || topResults.isEmpty()) {
-            return topResults;
+            return new NeighborExpansionResult(topResults, false, topResults.size(), 0);
         }
 
-        // Only expand for event/timeline intents
-        if (!"extract_events".equals(intent) && !"timeline".equals(intent)) {
-            return topResults;
+        // Only expand for event/timeline queries (check both intent and outputFormat)
+        String intent = plan.getIntent();
+        String outputFormat = plan.getOutputFormat();
+        boolean isEventQuery = "extract_events".equals(intent) || "timeline".equals(outputFormat);
+        
+        if (!isEventQuery) {
+            logger.debug("Neighbor expansion not triggered: intent={}, format={}", intent, outputFormat);
+            return new NeighborExpansionResult(topResults, false, topResults.size(), 0);
         }
 
-        logger.info("Expanding neighbor chunks for timeline intent (delta={})", NEIGHBOR_CHUNK_DELTA);
+        logger.info("[NEIGHBOR_EXPANSION] Activated for {} (intent={}, format={}, delta={})",
+            "timeline/event query", intent, outputFormat, NEIGHBOR_CHUNK_DELTA);
 
         // Collect all chunk IDs that should be included
         Set<Long> chunkIdsToFetch = new HashSet<>();
@@ -516,36 +545,37 @@ public class RetrievalService {
             }
         }
 
-        // Fetch neighbor chunks in bulk (if possible via repository query)
-        // For simplicity, fetch individually for now
+        // Build expanded result set with deduplication
         Map<Long, EvidenceChunk> expandedMap = new LinkedHashMap<>();
 
-        // Add original top results first (maintain ranking)
+        // Step 1: Add original top results first (maintain ranking)
         for (EvidenceChunk result : topResults) {
             expandedMap.put(result.chunkId(), result);
         }
 
-        // Add neighbor chunks (lower score, just for context)
+        // Step 2: Add neighbor chunks if not already present
+        int neighborsAdded = 0;
         for (Long chunkId : chunkIdsToFetch) {
-            if (!expandedMap.containsKey(chunkId)) {
+            if (!expandedMap.containsKey(chunkId) && !chunkId.equals(-1L)) {
                 // Try to fetch this chunk (may not exist in DB)
                 try {
                     List<EvidenceChunk> neighbors = chunkRepository.findByChunkId(chunkId);
                     if (!neighbors.isEmpty()) {
                         expandedMap.put(chunkId, neighbors.get(0));
+                        neighborsAdded++;
                         logger.debug("  Added neighbor chunk: {}", chunkId);
                     }
                 } catch (Exception e) {
-                    logger.debug("  Neighbor chunk not found: {} ({})", chunkId, e.getMessage());
+                    logger.debug("  Neighbor chunk not found: {}", chunkId);
                 }
             }
         }
 
         List<EvidenceChunk> expanded = new ArrayList<>(expandedMap.values());
-        logger.info("Neighbor expansion: {} original + {} neighbors = {} total",
-                topResults.size(), expanded.size() - topResults.size(), expanded.size());
+        logger.info("[NEIGHBOR_EXPANSION_RESULT] original={} neighbors_added={} total={}",
+                topResults.size(), neighborsAdded, expanded.size());
 
-        return expanded;
+        return new NeighborExpansionResult(expanded, neighborsAdded > 0, topResults.size(), neighborsAdded);
     }
 
     /**
