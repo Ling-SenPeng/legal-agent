@@ -4,24 +4,32 @@ import com.agent.model.analysis.LegalIssueType;
 import com.agent.model.analysis.authority.AuthorityMatch;
 import com.agent.model.analysis.authority.AuthorityType;
 import com.agent.model.analysis.authority.LegalAuthority;
+import com.agent.model.analysis.authority.RetrievedAuthority;
+import com.agent.service.authority.AuthorityClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Service for retrieving legal authorities (statutes, cases, practice guides) related to issues.
  * 
- * V1 Implementation: Uses mock authorities for testing and demonstration.
- * Future: Will integrate with actual authority corpus and hybrid search.
+ * V2 Implementation: Uses HttpAuthorityClient to fetch from authority-ingest service.
+ * Falls back to mock authorities if service is unavailable.
  */
 @Service
 public class AuthorityRetrievalService {
     private static final Logger logger = LoggerFactory.getLogger(AuthorityRetrievalService.class);
     
+    private final Optional<AuthorityClient> authorityClient;
     private static final List<LegalAuthority> MOCK_AUTHORITIES = initializeMockAuthorities();
+
+    public AuthorityRetrievalService(Optional<AuthorityClient> authorityClient) {
+        this.authorityClient = authorityClient;
+    }
 
     private static List<LegalAuthority> initializeMockAuthorities() {
         List<LegalAuthority> authorities = new ArrayList<>();
@@ -225,4 +233,55 @@ public class AuthorityRetrievalService {
         double wordMatchRatio = (double) matchedWords / queryWords.length;
         return Math.min(0.9, authority.getRelevanceScore() * (0.6 + wordMatchRatio * 0.4));
     }
+
+    /**
+     * Retrieve authorities from the HTTP service using query and topics.
+     * 
+     * Attempts to use HttpAuthorityClient if available. Falls back to mock authorities
+     * if the service is not available or returns no results.
+     * 
+     * @param query The search query
+     * @param topics List of topics to search
+     * @return List of LegalAuthority objects from either HTTP service or mocks
+     */
+    public List<LegalAuthority> retrieveAuthoritiesFromService(String query, List<String> topics) {
+        logger.debug("Attempting to retrieve authorities via HTTP service for query: '{}', topics: {}", 
+            query, topics);
+        
+        if (authorityClient.isPresent()) {
+            try {
+                List<RetrievedAuthority> retrieved = authorityClient.get()
+                    .findRelevantAuthorities(query, topics);
+                
+                if (!retrieved.isEmpty()) {
+                    logger.info("Retrieved {} authorities from HTTP service", retrieved.size());
+                    
+                    List<LegalAuthority> converted = new ArrayList<>();
+                    for (RetrievedAuthority ra : retrieved) {
+                        LegalAuthority authority = new LegalAuthority(
+                            ra.getAuthorityId(),
+                            ra.getTitle(),
+                            ra.getCitation(),
+                            ra.getAuthorityType(),
+                            "Authority Service",
+                            ra.getRuleSummary(),
+                            ra.getRelevanceScore()
+                        );
+                        converted.add(authority);
+                    }
+                    return converted;
+                } else {
+                    logger.debug("HTTP service returned no authorities, falling back to mocks");
+                }
+            } catch (Exception e) {
+                logger.warn("Error retrieving authorities from HTTP service, falling back to mocks: {}", 
+                    e.getMessage());
+            }
+        }
+        
+        // Fallback to mocks
+        logger.debug("Using fallback mock authorities");
+        return MOCK_AUTHORITIES;
+    }
 }
+

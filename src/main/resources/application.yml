@@ -58,6 +58,12 @@ agent:
   verification:
     enabled: true
     repair-enabled: true
+
+# Authority Service Configuration
+authority:
+  service:
+    base-url: ${AUTHORITY_SERVICE_BASE_URL:http://localhost:8081}
+    timeout-ms: 10000
     factual-keywords: paid,lived,moved,asked,agreed,owed,purchased,sold,received,gave,sent,dated,signed,executed,witnessed,acknowledged,admitted
   hybrid:
     enabled: ${HYBRID_ENABLED:true}

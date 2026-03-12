@@ -2,13 +2,11 @@ package com.agent.service;
 
 import com.agent.config.OpenAiProperties;
 import com.agent.model.openai.*;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
-import reactor.core.publisher.Mono;
 import java.time.Duration;
 import java.util.List;
 
@@ -21,12 +19,10 @@ public class OpenAiClient {
     
     private final WebClient webClient;
     private final OpenAiProperties openAiProperties;
-    private final ObjectMapper objectMapper;
 
-    public OpenAiClient(WebClient webClient, OpenAiProperties openAiProperties, ObjectMapper objectMapper) {
+    public OpenAiClient(WebClient webClient, OpenAiProperties openAiProperties) {
         this.webClient = webClient;
         this.openAiProperties = openAiProperties;
-        this.objectMapper = objectMapper;
     }
 
     /**

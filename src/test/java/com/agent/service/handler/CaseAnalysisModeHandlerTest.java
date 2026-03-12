@@ -49,7 +49,7 @@ class CaseAnalysisModeHandlerTest {
         // For testing, create a handler with actual authority services
         // In a full test scenario, these could be mocked or stubbed
         var realAuthorityQueryBuilder = new com.agent.service.analysis.authority.RuleBasedIssueAuthorityRetrievalStrategy();
-        var realAuthorityRetrievalService = new AuthorityRetrievalService();
+        var realAuthorityRetrievalService = new AuthorityRetrievalService(java.util.Optional.empty());
         var realAuthoritySummarizer = new AuthoritySummarizer();
         
         handler = new CaseAnalysisModeHandler(

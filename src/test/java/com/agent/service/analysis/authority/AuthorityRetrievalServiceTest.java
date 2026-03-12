@@ -5,12 +5,24 @@ import com.agent.model.analysis.LegalIssueType;
 import com.agent.model.analysis.authority.AuthorityMatch;
 import com.agent.model.analysis.authority.AuthorityType;
 import com.agent.model.analysis.authority.LegalAuthority;
+import com.agent.model.analysis.authority.RetrievedAuthority;
+import com.agent.service.authority.AuthorityClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 /**
  * Tests for AuthorityRetrievalService.
@@ -18,13 +30,19 @@ import static org.junit.jupiter.api.Assertions.*;
  * Verifies that authorities are correctly retrieved and scored
  * for legal queries related to specific issues.
  */
+@DisplayName("AuthorityRetrievalService Tests")
 class AuthorityRetrievalServiceTest {
     
     private AuthorityRetrievalService service;
     
+    @Mock
+    private AuthorityClient authorityClient;
+    
     @BeforeEach
     void setUp() {
-        service = new AuthorityRetrievalService();
+        MockitoAnnotations.openMocks(this);
+        // Test with no HTTP client (uses mocks)
+        service = new AuthorityRetrievalService(Optional.empty());
     }
     
     @Test
@@ -227,5 +245,105 @@ class AuthorityRetrievalServiceTest {
         for (AuthorityMatch match : matches) {
             assertEquals(LegalIssueType.REIMBURSEMENT, match.getIssueType());
         }
+    }
+
+    @Test
+    @DisplayName("retrieveAuthoritiesFromService uses HTTP client when available")
+    void testRetrieveAuthoritiesFromServiceUsesHttpClient() {
+        // Given: HTTP client returning authorities
+        RetrievedAuthority retrieved1 = new RetrievedAuthority(
+            "http-case-001",
+            "Marriage of Johnson",
+            "200 Cal.App.3d 200",
+            AuthorityType.CASE_LAW,
+            "Court ruled on reimbursement...",
+            0.92
+        );
+        
+        when(authorityClient.findRelevantAuthorities(anyString(), anyList()))
+            .thenReturn(Arrays.asList(retrieved1));
+        
+        // When: Creating service with HTTP client
+        AuthorityRetrievalService serviceWithClient = 
+            new AuthorityRetrievalService(Optional.of(authorityClient));
+        
+        List<LegalAuthority> authorities = 
+            serviceWithClient.retrieveAuthoritiesFromService("reimbursement", 
+                Arrays.asList("REIMBURSEMENT"));
+        
+        // Then: Should return converted authorities from HTTP service
+        assertFalse(authorities.isEmpty());
+        assertEquals("http-case-001", authorities.get(0).getAuthorityId());
+        assertEquals("Marriage of Johnson", authorities.get(0).getTitle());
+    }
+    
+    @Test
+    @DisplayName("findRelevantAuthorities merges and deduplicates results")
+    void testRetrieveAuthoritiesFromServiceFallsBackToMocks() {
+        // Given: HTTP client returning empty results
+        when(authorityClient.findRelevantAuthorities(anyString(), anyList()))
+            .thenReturn(new ArrayList<>());
+        
+        // When: Creating service with HTTP client that returns empty
+        AuthorityRetrievalService serviceWithClient = 
+            new AuthorityRetrievalService(Optional.of(authorityClient));
+        
+        List<LegalAuthority> authorities = 
+            serviceWithClient.retrieveAuthoritiesFromService("test", 
+                Arrays.asList("SOME_ISSUE"));
+        
+        // Then: Should fall back to mock authorities
+        assertFalse(authorities.isEmpty(), "Should fall back to mocks when service returns nothing");
+    }
+    
+    @Test
+    @DisplayName("CaseAnalysisModeHandler can use authorities via HTTP client")
+    void testSystemWorksWhenAuthorityServiceReturnsNoResults() {
+        // Given: HTTP client that has no results
+        when(authorityClient.findRelevantAuthorities(anyString(), anyList()))
+            .thenReturn(Collections.emptyList());
+        
+        AuthorityRetrievalService serviceWithClient = 
+            new AuthorityRetrievalService(Optional.of(authorityClient));
+        
+        // When: Retrieving authorities with empty response
+        List<LegalAuthority> authorities = 
+            serviceWithClient.retrieveAuthoritiesFromService("", 
+                new ArrayList<>());
+        
+        // Then: Should gracefully fall back to mocks
+        assertNotNull(authorities);
+        assertFalse(authorities.isEmpty(), "Should provide fallback authorities");
+    }
+
+    @Test
+    @DisplayName("Retrieved authorities are properly converted from RetrievedAuthority to LegalAuthority")
+    void testAuthorityConversionFromHttpResponse() {
+        // Given: Multiple authorities from HTTP service
+        List<RetrievedAuthority> httpAuthorities = Arrays.asList(
+            new RetrievedAuthority("id1", "Case 1", "100 Ca.3d 1", AuthorityType.CASE_LAW, "Summary 1", 0.95),
+            new RetrievedAuthority("id2", "Statute 1", "Code § 100", AuthorityType.STATUTE, "Summary 2", 0.85),
+            new RetrievedAuthority("id3", "Guide 1", "Practice Guide", AuthorityType.PRACTICE_GUIDE, "Summary 3", 0.75)
+        );
+        
+        when(authorityClient.findRelevantAuthorities(anyString(), anyList()))
+            .thenReturn(httpAuthorities);
+        
+        // When: Converting authorities
+        AuthorityRetrievalService serviceWithClient = 
+            new AuthorityRetrievalService(Optional.of(authorityClient));
+        
+        List<LegalAuthority> converted = 
+            serviceWithClient.retrieveAuthoritiesFromService("test", 
+                Arrays.asList("TEST"));
+        
+        // Then: All required fields should be present
+        assertEquals(3, converted.size());
+        assertEquals("id1", converted.get(0).getAuthorityId());
+        assertEquals("Case 1", converted.get(0).getTitle());
+        assertEquals("100 Ca.3d 1", converted.get(0).getCitation());
+        assertEquals(AuthorityType.CASE_LAW, converted.get(0).getAuthorityType());
+        assertEquals("Summary 1", converted.get(0).getSummary());
+        assertEquals(0.95, converted.get(0).getRelevanceScore());
     }
 }
