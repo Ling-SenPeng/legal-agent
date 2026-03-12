@@ -117,7 +117,6 @@ public class RuleBasedCaseFactExtractor implements CaseFactExtractor {
 
             // Check if sentence contains relevant patterns
             if (containsFactualContent(trimmed)) {
-                double confidence = calculateConfidence(trimmed);
                 LegalIssueType issue = relevantIssue != null ? relevantIssue : inferIssueFromFact(trimmed);
                 
                 // Determine polarity with cautious heuristics (default to UNKNOWN)
@@ -167,22 +166,7 @@ public class RuleBasedCaseFactExtractor implements CaseFactExtractor {
                lower.contains(" defendant ") || lower.contains(" respondent ");
     }
 
-    /**
-     * Calculate confidence score for extracted fact.
-     * 
-     * @param sentence The fact sentence
-     * @return Confidence score [0.0-1.0]
-     */
-    private double calculateConfidence(String sentence) {
-        double confidence = 0.5;
-        
-        // Increase confidence for specific details
-        if (DATE_PATTERN.matcher(sentence).find()) confidence += 0.2;
-        if (PAYMENT_PATTERN.matcher(sentence).find()) confidence += 0.2;
-        if (sentence.length() > 100) confidence += 0.1;
-        
-        return Math.min(0.95, confidence);
-    }
+
 
     /**
      * Infer relevant issue type from fact content.

@@ -215,8 +215,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                     double newSimilarity = chunk.similarity() != null ? chunk.similarity() : 0.0;
                     
                     if (newSimilarity > existingSimilarity) {
-                        logger.debug("[CASE_ANALYSIS] Updating chunk similarity: {:.2f} → {:.2f}",
-                            existingSimilarity, newSimilarity);
+                        logger.debug("[CASE_ANALYSIS] Updating chunk similarity: {} → {}",
+                            String.format("%.2f", existingSimilarity), String.format("%.2f", newSimilarity));
                         chunkMap.put(chunkId, chunk);
                     }
                 } else {
@@ -226,12 +226,15 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             }
         }
         
-        // Convert to list and sort deterministically by similarity score (descending)
+        // Convert to list and sort deterministically by similarity score (descending), then by chunkId (ascending)
         List<EvidenceChunk> mergedChunks = new ArrayList<>(chunkMap.values());
         mergedChunks.sort((c1, c2) -> {
             double sim1 = c1.similarity() != null ? c1.similarity() : 0.0;
             double sim2 = c2.similarity() != null ? c2.similarity() : 0.0;
-            return Double.compare(sim2, sim1); // descending order (highest score first)
+            int similarityResult = Double.compare(sim2, sim1); // descending order (highest score first)
+            if (similarityResult != 0) return similarityResult;
+            // Secondary sort by chunkId for full determinism
+            return Long.compare(c1.chunkId(), c2.chunkId());
         });
         
         logger.debug("[CASE_ANALYSIS] Total unique chunks after merging: {} (sorted by similarity)",
@@ -374,26 +377,28 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         long favorableCount = extractedFacts.stream().filter(CaseFact::isFavorable).count();
         long unfavorableCount = extractedFacts.stream().filter(f -> !f.isFavorable()).count();
         
-        narrative.append("Based on the evidence analysis:\n\n");
+        narrative.append("PRELIMINARY ANALYSIS (based on available evidence):\n\n");
         narrative.append(String.format(
-            "- Identified %d legal issue(s) requiring assessment\n",
+            "- Identified %d legal issue(s) for assessment\n",
             context.getIdentifiedIssues().size()
         ));
         narrative.append(String.format(
-            "- Found %d favorable fact(s) supporting the claim\n",
+            "- Retrieved %d supporting fact(s) from evidence\n",
             favorableCount
         ));
         narrative.append(String.format(
-            "- Found %d unfavorable fact(s) challenging the claim\n",
+            "- Retrieved %d challenging fact(s) from evidence\n",
             unfavorableCount
         ));
         narrative.append(String.format(
-            "- Identified %d missing fact(s) that would strengthen the analysis\n\n",
+            "- Identified %d missing fact(s) needed for complete analysis\n\n",
             missingFacts.size()
         ));
         
-        narrative.append("Preliminary Assessment:\n");
-        narrative.append(String.format("The claim appears %s based on available evidence. ", 
+        narrative.append("Initial Assessment:\n");
+        narrative.append(String.format(
+            "Based on the limited evidence available, the claim position appears %s. " +
+            "This assessment is preliminary and should be validated with complete evidence.\n",
             strengthLevel.toString().toLowerCase().replace("_", " ")
         ));
         
@@ -413,20 +418,28 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         // Use separate missing facts list
         List<MissingFact> missingFacts = context.getMissingFacts();
         
+        recommendations.append("RECOMMENDED NEXT STEPS:\n\n");
+        
         if (!missingFacts.isEmpty()) {
-            recommendations.append("Priority actions to strengthen the case:\n");
+            recommendations.append("Critical missing information:\n");
             missingFacts.stream()
                 .limit(3)
-                .forEach(fact -> recommendations.append("- Locate: ")
+                .forEach(fact -> recommendations.append("- Obtain: ")
                     .append(fact.getDescription())
                     .append("\n"));
+            recommendations.append("\n");
         }
         
-        // Provide strength-specific recommendations
+        // Provide conservative strength-specific recommendations
         switch (strengthLevel) {
-            case VERY_STRONG, STRONG -> recommendations.append("\nThe position is strong. Consider proceeding with confidence.");
-            case MODERATE -> recommendations.append("\nThe position is defensible but mixed. Additional evidence would improve prospects.");
-            case WEAK, VERY_WEAK -> recommendations.append("\nThe position is challenged by available evidence. Additional support is needed before proceeding.");
+            case VERY_STRONG -> recommendations.append("Assessment: Strong evidentiary support observed. " +
+                    "However, verify all facts and consult counsel before relying on this analysis.");
+            case STRONG -> recommendations.append("Assessment: Favorable evidence noted. " +
+                    "Recommend obtaining the missing facts above and consulting counsel for full evaluation.");
+            case MODERATE -> recommendations.append("Assessment: Mixed evidence. " +
+                    "Strongly recommend focused fact-gathering on the gaps identified above.");
+            case WEAK, VERY_WEAK -> recommendations.append("Assessment: Significant challenges present. " +
+                    "Additional evidence gathering and legal counsel consultation are essential before proceeding.");
         }
         
         return recommendations.toString();

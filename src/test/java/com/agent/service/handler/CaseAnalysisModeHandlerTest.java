@@ -235,8 +235,10 @@ class CaseAnalysisModeHandlerTest {
         assertTrue(answer.contains("Supporting Facts:"), "Should list supporting facts");
         assertTrue(answer.contains("Title status") || answer.contains("Missing"), 
             "Should show missing evidence");
-        assertTrue(answer.contains("Priority actions"), "Should provide recommendations");
-        assertTrue(answer.contains("PRELIMINARY ANALYSIS ONLY"), "Should have disclaimer");
+        assertTrue(answer.contains("RECOMMENDED NEXT STEPS:") || answer.contains("Assessment:"), 
+            "Should provide recommendations");
+        assertTrue(answer.contains("preliminary") || answer.contains("PRELIMINARY"), 
+            "Should indicate preliminary nature");
     }
     
     // ==================== HELPER METHODS ====================
