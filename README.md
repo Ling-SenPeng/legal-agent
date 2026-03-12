@@ -83,12 +83,15 @@ legal-agent/
 │   │   │       │   └── handler/
 │   │   │       │       └── CaseAnalysisModeHandler.java (V1 impl)
 │   │   │       └── analysis/
-│   │   │           ├── CaseAnalysisContextBuilder.java  (Interface)
-│   │   │           ├── RuleBasedCaseAnalysisContextBuilder.java
-│   │   │           ├── CaseIssueExtractor.java         (Interface)
-│   │   │           ├── RuleBasedCaseIssueExtractor.java
-│   │   │           ├── CaseFactExtractor.java          (Interface)
-│   │   │           └── RuleBasedCaseFactExtractor.java
+│   │           ├── CaseAnalysisContextBuilder.java  (Interface)
+│   │           ├── RuleBasedCaseAnalysisContextBuilder.java
+│   │           ├── CaseIssueExtractor.java         (Interface)
+│   │           ├── RuleBasedCaseIssueExtractor.java
+│   │           ├── CaseFactExtractor.java          (Interface)
+│   │           ├── RuleBasedCaseFactExtractor.java
+│   │           ├── CaseAnalysisQueryCleaner.java   (Noise removal)
+│   │           ├── IssueRetrievalStrategy.java     (Interface)
+│   │           └── CaseAnalysisRetrievalQueryBuilder.java (Query builder)
 │   │   └── resources/
 │   │       ├── application.yml
 │   │       └── application-test.yml
@@ -101,8 +104,9 @@ legal-agent/
 │               └── analysis/
 │                   ├── CaseAnalysisFactExtractionTest.java
 │                   ├── RuleBasedCaseAnalysisContextBuilderTest.java
-│                   ├── RuleBasedCaseIssueExtracterTest.java
-│                   └── ...
+│                   ├── RuleBasedCaseIssueExtracterTest.java                   ├── CaseAnalysisQueryCleanerTest.java
+                   ├── CaseAnalysisRetrievalQueryBuilderTest.java
+                   ├── CaseAnalysisQueryPreprocessingIntegrationTest.java│                   └── ...
 ├── pom.xml
 └── README.md
 ```
@@ -460,9 +464,12 @@ mvn test
 | RuleBasedCaseAnalysisContextBuilder | 14 | `RuleBasedCaseAnalysisContextBuilderTest.java` |
 | RuleBasedCaseFactExtractor | 27 | `RuleBasedCaseFactExtractionTest.java` |
 | RuleBasedCaseIssueExtractor | 25 | `RuleBasedCaseIssueExtracterTest.java` |
+| CaseAnalysisQueryCleaner | 10 | `CaseAnalysisQueryCleanerTest.java` |
+| CaseAnalysisRetrievalQueryBuilder | 12 | `CaseAnalysisRetrievalQueryBuilderTest.java` |
+| Query Preprocessing Pipeline | 8 | `CaseAnalysisQueryPreprocessingIntegrationTest.java` |
 | RuleBasedTaskRouter | 26 | `RuleBasedTaskRouterTest.java` |
 | RetrievalService | 7 | `RetrievalServiceTest.java` |
-| **Total** | **107** | |
+| **Total** | **137** | |
 
 **CaseAnalysisModeHandler Tests** (7 new tests):
 - ✅ Handler returns correct TaskMode
@@ -493,7 +500,13 @@ User Query
     ↓
 [Mode Handler Dispatch]
 ├─ CASE_ANALYSIS → CaseAnalysisModeHandler
-│  ├─ [Retrieval] - Get evidence
+│  ├─ [Query Preprocessing Pipeline]  ← NEW
+│  │  ├─ Strip analysis noise (CaseAnalysisQueryCleaner)
+│  │  ├─ Extract issues (CaseIssueExtractor)
+│  │  └─ Build issue-driven retrieval queries (IssueRetrievalStrategy)
+│  ├─ [Issue-Driven Retrieval]
+│  │  ├─ Execute multiple optimized queries
+│  │  └─ Merge & deduplicate results
 │  ├─ [Context Builder] - Extract issues & facts
 │  ├─ [Strength Assessment] - Evaluate 5-level scale
 │  └─ [Answer Formatter] - 6-section report
@@ -541,18 +554,44 @@ psql -h localhost -U postgres -d legal_agent
 - **Embeddings**: OpenAI `text-embedding-3-large` (1536 dims) is recommended.
 - **LLM Model**: Use `gpt-4-mini` or faster models for MVP; upgrade to `gpt-4-turbo` for production.
 
+## Completed Features
+
+### Query Preprocessing Pipeline (V1 ✅)
+
+Implements intelligent query preprocessing to improve CASE_ANALYSIS retrieval quality:
+
+**Components**:
+- **CaseAnalysisQueryCleaner**: Strips 30+ analysis framing phrases ("based on these facts", "do I have", etc.)
+- **CaseAnalysisRetrievalQueryBuilder** (implements IssueRetrievalStrategy): Generates 1-5 optimized retrieval queries per detected issue
+- **Issue-to-Keyword Mapping**: 8 legal issue types with relevant keywords for each
+- **Merge & Deduplication**: Combines results from multiple queries, keeping highest similarity scores
+
+**Benefits**:
+- Removes analysis noise that interferes with vector search relevance
+- Generates multiple query variants for better recall
+- Deterministic, rule-based implementation (no external ML dependencies)
+- Comprehensive logging for debugging
+
+**Testing**:
+- 30 tests total (10 + 12 + 8 for cleaning, building, and integration)
+- Real-world query rewrite examples validated
+- All 137 tests passing
+
+**Documentation**: See [CASE_ANALYSIS_QUERY_PREPROCESSING.md](CASE_ANALYSIS_QUERY_PREPROCESSING.md) for complete architecture guide.
+
 ## Next Steps (Production Hardening)
 
-1. Implement batch embedding injestion for large document sets
-2. Add hybrid search (semantic + keyword matching with BM25)
-3. Implement RAG-specific metrics (answer quality, citation coverage)
-4. Add support for multi-case queries
-5. Integrate with vector store (e.g., LangChain, LlamaIndex)
-6. Add document chunking strategies (semantic, sliding window)
-7. Implement caching for frequently asked questions
-8. Add observability (tracing, metrics, structured logging)
-9. Set up Redis cache for embeddings
-10. Implement async processing for large queries
+1. ✅ COMPLETED: Issue-driven retrieval with query preprocessing
+2. Implement batch embedding ingestion for large document sets
+3. Add hybrid search (semantic + keyword matching with BM25)
+4. Implement RAG-specific metrics (answer quality, citation coverage)
+5. Add support for multi-case queries
+6. Integrate with vector store (e.g., LangChain, LlamaIndex)
+7. Add document chunking strategies (semantic, sliding window)
+8. Implement caching for frequently asked questions
+9. Add observability (tracing, metrics, structured logging)
+10. Set up Redis cache for embeddings
+11. Implement async processing for large queries
 
 ## License
 

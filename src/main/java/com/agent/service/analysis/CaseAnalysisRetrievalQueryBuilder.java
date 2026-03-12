@@ -15,10 +15,12 @@ import java.util.stream.Collectors;
  * Transforms a cleaned query + detected issues into multiple retrieval subqueries
  * to improve coverage of relevant facts.
  *
+ * Implements IssueRetrievalStrategy for issue-driven retrieval.
+ *
  * V1 Implementation: Rule-based subquery generation, deterministic, no ML.
  */
 @Service
-public class CaseAnalysisRetrievalQueryBuilder {
+public class CaseAnalysisRetrievalQueryBuilder implements IssueRetrievalStrategy {
     private static final Logger logger = LoggerFactory.getLogger(CaseAnalysisRetrievalQueryBuilder.class);
 
     /**
@@ -78,6 +80,7 @@ public class CaseAnalysisRetrievalQueryBuilder {
      * @param issues Detected legal issues from query
      * @return List of retrieval queries to execute
      */
+    @Override
     public List<String> buildQueries(String cleanedQuery, List<CaseIssue> issues) {
         Set<String> queries = new LinkedHashSet<>(); // Maintains order, prevents duplicates
 
