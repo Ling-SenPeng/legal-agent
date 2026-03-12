@@ -4,10 +4,16 @@ import com.agent.model.EvidenceChunk;
 import com.agent.model.ModeExecutionResult;
 import com.agent.model.TaskMode;
 import com.agent.model.analysis.*;
+import com.agent.model.analysis.authority.AuthorityMatch;
+import com.agent.model.analysis.authority.AuthoritySummary;
+import com.agent.model.analysis.authority.LegalAuthority;
 import com.agent.service.analysis.CaseAnalysisContextBuilder;
 import com.agent.service.analysis.CaseAnalysisQueryCleaner;
 import com.agent.service.analysis.CaseAnalysisRetrievalQueryBuilder;
 import com.agent.service.analysis.CaseIssueExtractor;
+import com.agent.service.analysis.authority.IssueAuthorityRetrievalStrategy;
+import com.agent.service.analysis.authority.AuthorityRetrievalService;
+import com.agent.service.analysis.authority.AuthoritySummarizer;
 import com.agent.service.RetrievalService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -39,12 +45,22 @@ class CaseAnalysisModeHandlerTest {
         testQueryCleaner = new TestQueryCleaner();
         testQueryBuilder = new TestQueryBuilder();
         testIssueExtractor = new TestIssueExtractor();
+        
+        // For testing, create a handler with actual authority services
+        // In a full test scenario, these could be mocked or stubbed
+        var realAuthorityQueryBuilder = new com.agent.service.analysis.authority.RuleBasedIssueAuthorityRetrievalStrategy();
+        var realAuthorityRetrievalService = new AuthorityRetrievalService();
+        var realAuthoritySummarizer = new AuthoritySummarizer();
+        
         handler = new CaseAnalysisModeHandler(
             testRetrievalService, 
             testContextBuilder,
             testQueryCleaner,
             testQueryBuilder,
-            testIssueExtractor
+            testIssueExtractor,
+            realAuthorityQueryBuilder,
+            realAuthorityRetrievalService,
+            realAuthoritySummarizer
         );
     }
 
@@ -307,6 +323,17 @@ class CaseAnalysisModeHandlerTest {
             String cleanedQuery,
             List<CaseIssue> identifiedIssues,
             List<EvidenceChunk> evidenceChunks
+        ) {
+            return context;
+        }
+        
+        @Override
+        public CaseAnalysisContext buildContextWithAuthorities(
+            String originalQuery,
+            String cleanedQuery,
+            List<CaseIssue> identifiedIssues,
+            List<EvidenceChunk> evidenceChunks,
+            List<com.agent.model.analysis.authority.AuthoritySummary> authoritySummaries
         ) {
             return context;
         }

@@ -2,6 +2,7 @@ package com.agent.service.analysis;
 
 import com.agent.model.EvidenceChunk;
 import com.agent.model.analysis.*;
+import com.agent.model.analysis.authority.AuthoritySummary;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -83,6 +84,67 @@ public class RuleBasedCaseAnalysisContextBuilder implements CaseAnalysisContextB
         
         logger.info("Context built: {} issues, {} retrieved facts, {} missing facts, summary length: {}",
             issues.size(), extractedFacts.size(), missingFacts.size(), standardSummary.length());
+        
+        return context;
+    }
+
+    /**
+     * Build case analysis context from pre-extracted issues, evidence, and authorities.
+     * 
+     * Extended version that includes legal authorities (statutes, cases, practice guides)
+     * for each identified issue.
+     * 
+     * @param originalQuery The user's original case question
+     * @param cleanedQuery The case question after noise removal
+     * @param identifiedIssues Pre-extracted legal issues
+     * @param evidenceChunks Retrieved evidence
+     * @param authoritySummaries Legal authorities and rule summaries for each issue
+     * @return Complete CaseAnalysisContext with authorities included
+     */
+    @Override
+    public CaseAnalysisContext buildContextWithAuthorities(
+        String originalQuery,
+        String cleanedQuery,
+        List<CaseIssue> identifiedIssues,
+        List<EvidenceChunk> evidenceChunks,
+        List<AuthoritySummary> authoritySummaries
+    ) {
+        logger.info("Building case analysis context with authorities for query: {}", originalQuery);
+        logger.debug("Cleaned query: {}", cleanedQuery);
+        logger.debug("Using pre-extracted issues: {} identified", identifiedIssues.size());
+        logger.debug("Authority summaries: {} provided", authoritySummaries.size());
+        
+        // Step 1: Use pre-extracted issues (no recomputation)
+        List<CaseIssue> issues = identifiedIssues;
+        logger.info("Using {} pre-identified legal issues", issues.size());
+        
+        // Step 2: Extract facts from evidence
+        List<CaseFact> extractedFacts = new ArrayList<>();
+        for (CaseIssue issue : issues) {
+            List<CaseFact> issueFacts = factExtractor.extractFacts(evidenceChunks, issue.getType());
+            extractedFacts.addAll(issueFacts);
+        }
+        logger.info("Extracted {} case facts from evidence", extractedFacts.size());
+        
+        // Step 3: Identify missing facts for each issue type
+        List<MissingFact> missingFacts = identifyMissingFacts(issues, extractedFacts);
+        logger.info("Identified {} missing or needed facts", missingFacts.size());
+        
+        // Step 4: Generate legal standard summary
+        String standardSummary = generateLegalStandardSummary(issues);
+        
+        // Step 5: Build context with retrieved facts, missing facts, and authorities
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            originalQuery,
+            issues,
+            extractedFacts,  // Only retrieved facts, not combined
+            missingFacts,    // Missing facts stored separately
+            standardSummary,
+            authoritySummaries  // Include authorities
+        );
+        
+        logger.info("Context built with authorities: {} issues, {} retrieved facts, {} missing facts, {} authorities, summary length: {}",
+            issues.size(), extractedFacts.size(), missingFacts.size(), authoritySummaries.size(), standardSummary.length());
         
         return context;
     }

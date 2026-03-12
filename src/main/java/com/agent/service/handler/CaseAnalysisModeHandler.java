@@ -4,12 +4,16 @@ import com.agent.model.ModeExecutionResult;
 import com.agent.model.TaskMode;
 import com.agent.model.EvidenceChunk;
 import com.agent.model.analysis.*;
+import com.agent.model.analysis.authority.AuthoritySummary;
 import com.agent.service.TaskModeHandler;
 import com.agent.service.RetrievalService;
 import com.agent.service.analysis.CaseAnalysisContextBuilder;
 import com.agent.service.analysis.CaseAnalysisQueryCleaner;
 import com.agent.service.analysis.CaseAnalysisRetrievalQueryBuilder;
 import com.agent.service.analysis.CaseIssueExtractor;
+import com.agent.service.analysis.authority.IssueAuthorityRetrievalStrategy;
+import com.agent.service.analysis.authority.AuthorityRetrievalService;
+import com.agent.service.analysis.authority.AuthoritySummarizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -27,14 +31,16 @@ import java.util.ArrayList;
  * 
  * Evaluates facts against legal principles to assess claim strength and predict outcomes.
  * 
- * V1 Pipeline:
+ * V2 Pipeline (with Authority Retrieval):
  * 1. Extract legal issues from query
  * 2. Retrieve relevant case facts using existing retrieval flow
- * 3. Convert evidence chunks into CaseFact objects
- * 4. Build comprehensive CaseAnalysisContext
- * 5. Generate CaseAnalysisResult with strength assessment
- * 6. Format answer with analysis sections
- * 7. Return ModeExecutionResult with metadata
+ * 3. Retrieve legal authorities (statutes, cases, practice guides) for each issue
+ * 4. Summarize authorities into rule descriptions
+ * 5. Convert evidence chunks into CaseFact objects
+ * 6. Build comprehensive CaseAnalysisContext with facts and authorities
+ * 7. Generate CaseAnalysisResult with strength assessment
+ * 8. Format answer with analysis sections (including relevant authorities)
+ * 9. Return ModeExecutionResult with metadata
  */
 @Component
 public class CaseAnalysisModeHandler implements TaskModeHandler {
@@ -45,19 +51,28 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private final CaseAnalysisQueryCleaner queryCleaner;
     private final CaseAnalysisRetrievalQueryBuilder queryBuilder;
     private final CaseIssueExtractor issueExtractor;
+    private final IssueAuthorityRetrievalStrategy authorityQueryBuilder;
+    private final AuthorityRetrievalService authorityRetrievalService;
+    private final AuthoritySummarizer authoritySummarizer;
 
     public CaseAnalysisModeHandler(
         RetrievalService retrievalService,
         CaseAnalysisContextBuilder contextBuilder,
         CaseAnalysisQueryCleaner queryCleaner,
         CaseAnalysisRetrievalQueryBuilder queryBuilder,
-        CaseIssueExtractor issueExtractor
+        CaseIssueExtractor issueExtractor,
+        IssueAuthorityRetrievalStrategy authorityQueryBuilder,
+        AuthorityRetrievalService authorityRetrievalService,
+        AuthoritySummarizer authoritySummarizer
     ) {
         this.retrievalService = retrievalService;
         this.contextBuilder = contextBuilder;
         this.queryCleaner = queryCleaner;
         this.queryBuilder = queryBuilder;
         this.issueExtractor = issueExtractor;
+        this.authorityQueryBuilder = authorityQueryBuilder;
+        this.authorityRetrievalService = authorityRetrievalService;
+        this.authoritySummarizer = authoritySummarizer;
     }
 
     @Override
@@ -133,35 +148,50 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             
             // ===== ANALYSIS PHASE =====
             
-            // Step 5: Build analysis context (uses pre-extracted issues and evidence)
-            logger.debug("[CASE_ANALYSIS] Step 5: Building case analysis context");
-            CaseAnalysisContext context = contextBuilder.buildContext(
+            // Step 5: Retrieve and summarize legal authorities for each issue
+            logger.debug("[CASE_ANALYSIS] Step 5: Retrieving and summarizing legal authorities");
+            List<AuthoritySummary> authoritySummaries = retrieveAndSummarizeAuthorities(issues, 3);
+            logger.info("[CASE_ANALYSIS] Retrieved authority summaries for {} issues", authoritySummaries.size());
+            
+            for (int i = 0; i < authoritySummaries.size(); i++) {
+                logger.debug("[CASE_ANALYSIS]   Authority {} for {}: {} authorities",
+                    i + 1,
+                    authoritySummaries.get(i).getIssueType(),
+                    authoritySummaries.get(i).getAuthorityCount());
+            }
+            
+            // Step 6: Build analysis context (uses pre-extracted issues, evidence, and authorities)
+            logger.debug("[CASE_ANALYSIS] Step 6: Building case analysis context");
+            CaseAnalysisContext context = contextBuilder.buildContextWithAuthorities(
                 query, 
                 cleanedQuery,
                 issues,
-                mergedEvidenceChunks
+                mergedEvidenceChunks,
+                authoritySummaries
             );
             
-            logger.info("[CASE_ANALYSIS] Context built with {} issues and {} facts",
+            logger.info("[CASE_ANALYSIS] Context built with {} issues, {} facts, {} authorities",
                 context.getIdentifiedIssues().size(),
-                context.getRelevantFacts().size());
+                context.getRelevantFacts().size(),
+                context.getAuthoritySummaries().size());
             
-            // Step 6: Generate case analysis result with strength assessment
-            logger.debug("[CASE_ANALYSIS] Step 6: Generating analysis result");
+            // Step 7: Generate case analysis result with strength assessment
+            logger.debug("[CASE_ANALYSIS] Step 7: Generating analysis result");
             CaseAnalysisResult result = generateAnalysisResult(context);
             
             logger.info("[CASE_ANALYSIS] Analysis complete - Strength: {}, Confidence: {}",
                 result.getStrengthLevel(),
                 String.format("%.2f", result.getConfidenceScore()));
             
-            // Step 7: Format answer with analysis sections
+            // Step 8: Format answer with analysis sections
             String answer = formatAnalysisAnswer(query, context, result);
             
             // Build metadata
             String metadata = String.format(
-                "Mode: CASE_ANALYSIS | Issues: %d | Facts: %d | Strength: %s | Confidence: %.2f%% | Query: %s",
+                "Mode: CASE_ANALYSIS | Issues: %d | Facts: %d | Authorities: %d | Strength: %s | Confidence: %.2f%% | Query: %s",
                 context.getIdentifiedIssues().size(),
                 context.getRelevantFacts().size(),
+                context.getAuthoritySummaries().size(),
                 result.getStrengthLevel(),
                 result.getConfidenceScore() * 100,
                 query
@@ -181,6 +211,48 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                 "Error performing case analysis: " + e.getMessage()
             );
         }
+    }
+
+    /**
+     * Retrieve and summarize legal authorities for identified issues.
+     * 
+     * For each issue:
+     * 1. Generate authority retrieval queries
+     * 2. Retrieve matching authorities
+     * 3. Summarize authorities into rule descriptions
+     * 4. Return AuthoritySummary for issue
+     * 
+     * @param issues Identified legal issues
+     * @param topK Number of top authorities per issue
+     * @return List of AuthoritySummary objects
+     */
+    private List<AuthoritySummary> retrieveAndSummarizeAuthorities(List<CaseIssue> issues, int topK) {
+        List<AuthoritySummary> summaries = new ArrayList<>();
+        
+        for (CaseIssue issue : issues) {
+            logger.debug("[CASE_ANALYSIS] Retrieving authorities for issue: {}", issue.getType());
+            
+            // Generate authority queries for this issue
+            List<String> authorityQueries = authorityQueryBuilder.buildAuthorityQueries(issue);
+            logger.debug("[CASE_ANALYSIS] Generated {} authority queries for issue: {}",
+                authorityQueries.size(), issue.getType());
+            
+            // Retrieve matching authorities
+            List<com.agent.model.analysis.authority.AuthorityMatch> authorityMatches = authorityRetrievalService.retrieveAuthorities(
+                authorityQueries,
+                issue.getType(),
+                topK
+            );
+            
+            // Summarize authorities into rule description
+            AuthoritySummary summary = authoritySummarizer.summarize(issue, authorityMatches);
+            summaries.add(summary);
+            
+            logger.debug("[CASE_ANALYSIS] Authority summary for {}: {} authorities with {} match records",
+                issue.getType(), summary.getAuthorityCount(), authorityMatches.size());
+        }
+        
+        return summaries;
     }
 
     /**
@@ -474,7 +546,32 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         answer.append("APPLICABLE LEGAL STANDARDS\n");
         answer.append("---\n");
-        answer.append(context.getLegalStandardSummary()).append("\n");
+        answer.append(context.getLegalStandardSummary()).append("\n\n");
+        
+        answer.append("RELEVANT AUTHORITIES & RULE SUMMARY\n");
+        answer.append("---\n");
+        if (context.getAuthoritySummaries().isEmpty()) {
+            answer.append("No specific authorities retrieved for the identified issues.\n\n");
+        } else {
+            for (AuthoritySummary authoritySummary : context.getAuthoritySummaries()) {
+                answer.append(String.format("For %s Issue:\n", 
+                    authoritySummary.getIssueType().toString().replace("_", " ").toLowerCase()));
+                answer.append(String.format("Rule: %s\n", authoritySummary.getSummarizedRule()));
+                
+                if (!authoritySummary.getAuthorities().isEmpty()) {
+                    answer.append("Supporting Authorities:\n");
+                    authoritySummary.getAuthorities().stream()
+                        .limit(3)
+                        .forEach(auth -> answer.append(String.format(
+                            "  - %s (%s) - %s\n",
+                            auth.getCitation(),
+                            auth.getAuthorityType(),
+                            auth.getTitle()
+                        )));
+                }
+                answer.append("\n");
+            }
+        }
         
         answer.append("APPLICATION SUMMARY\n");
         answer.append("---\n");
