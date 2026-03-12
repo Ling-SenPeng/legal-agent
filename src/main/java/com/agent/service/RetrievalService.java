@@ -127,12 +127,20 @@ public class RetrievalService {
     private List<EvidenceChunk> hybridSearch(RetrievalPlan plan, int topK) {
         logger.info("=== HYBRID SEARCH EXECUTION ===");
         logger.info("  Mode: Hybrid (Vector + Keyword)");
-        logger.info("  TopK Vector: {}, TopK Keyword: {}, Alpha: {}", topKVector, topKKeyword, hybridAlpha);
+        logger.info("  TopK Vector: {}, TopK Keyword: {}", topKVector, topKKeyword);
 
         // Step 1: Generate embedding for vector search using planned vector query
         logger.info("Step 1: Vector Search");
-        logger.info("  Vector query: {}", plan.getVectorQuery());
-        List<Double> questionEmbedding = openAiClient.generateEmbedding(plan.getVectorQuery());
+        
+        // Use vectorQuery from plan, fallback to original query if blank
+        String vectorQuery = plan.getVectorQuery();
+        if (vectorQuery == null || vectorQuery.trim().isEmpty()) {
+            logger.warn("[VECTOR_FALLBACK] VectorQuery is blank, falling back to original query: {}", plan.getOriginalQuery());
+            vectorQuery = plan.getOriginalQuery();
+        }
+        logger.info("  Vector query: {}", vectorQuery);
+        
+        List<Double> questionEmbedding = openAiClient.generateEmbedding(vectorQuery);
         logger.debug("  Embedding dimension: {}", questionEmbedding.size());
         String embeddingVector = convertToVectorString(questionEmbedding);
 
@@ -161,11 +169,11 @@ public class RetrievalService {
                 mergedMap.size(), vectorResults.size(), keywordResults.size(),
                 vectorResults.size() + keywordResults.size() - mergedMap.size());
 
-        // Step 5: Normalize and fuse scores
-        logger.info("Step 4: Score Normalization & Fusion");
-        List<EvidenceChunk> fusedChunks = normalizeAndFuseScores(new ArrayList<>(mergedMap.values()));
-        logger.debug("  Score fusion alpha: {} (vector weight) + {} (keyword weight)",
-                hybridAlpha, (1.0 - hybridAlpha));
+        // Step 5: Compute final scores with exact phrase boost
+        logger.info("Step 4: Final Score Computation");
+        List<EvidenceChunk> fusedChunks = computeFinalScores(new ArrayList<>(mergedMap.values()), plan.getEntities());
+        logger.debug("  Scoring: keyword={} + vector={} + phrase_boost={}",
+                KEYWORD_SCORE_WEIGHT, VECTOR_SCORE_WEIGHT, EXACT_PHRASE_BOOST);
 
         // Step 6: Sort by finalScore and return top-K with citations
         logger.info("Step 5: Final Ranking");
@@ -402,7 +410,7 @@ public class RetrievalService {
     }
 
     /**
-     * Compute final hybrid score using weighted formula.
+     * Compute final hybrid score using weighted formula with exact phrase boost.
      * 
      * Score Formula:
      *   finalScore = (keyword_score × 1.5) + (vector_score × 1.0) + exactPhraseBoost
@@ -410,14 +418,19 @@ public class RetrievalService {
      * Rationale:
      * - Keyword search is heavily trusted for legal document retrieval (literal matching)
      * - Vector search provides semantic coverage (catch paraphrasing, synonyms)
-     * - Exact phrase boost (+0.3) when chunk contains entity phrase from query
+     * - Exact phrase boost (+0.3) when chunk contains expanded entity phrases
+     * 
+     * Exact phrase matching:
+     * Check if chunk text (case-insensitive) contains any of the expanded entity phrases.
+     * Expanded entities include original terms plus synonyms (e.g., "TRO" also matches "temporary restraining order").
      * 
      * Note: Scores are NOT normalized to [0,1] - raw weighted sum allows fine-grained ranking.
      * 
      * @param chunks The merged chunks from keyword and vector search
+     * @param entities List of extracted entities (original + expanded synonyms)
      * @return Chunks with computed finalScore
      */
-    private List<EvidenceChunk> normalizeAndFuseScores(List<EvidenceChunk> chunks) {
+    private List<EvidenceChunk> computeFinalScores(List<EvidenceChunk> chunks, List<String> entities) {
         if (chunks.isEmpty()) {
             return chunks;
         }
@@ -434,10 +447,17 @@ public class RetrievalService {
                     ? chunk.vectorScore() * VECTOR_SCORE_WEIGHT
                     : 0.0;
 
-                // Exact phrase boost (chunk text contains exact phrase from entities)
+                // Exact phrase boost: check if chunk text contains any expanded entity phrase
                 double boostContrib = 0.0;
-                // Note: In full implementation, would check if chunk.text() contains entity phrases
-                // For now, exact phrase matching is done in searchByKeywordQueries()
+                if (entities != null && !entities.isEmpty() && chunk.text() != null) {
+                    String chunkTextLower = chunk.text().toLowerCase();
+                    boolean hasExactPhrase = entities.stream()
+                        .anyMatch(entity -> chunkTextLower.contains(entity.toLowerCase()));
+                    if (hasExactPhrase) {
+                        boostContrib = EXACT_PHRASE_BOOST;
+                        logger.debug("Exact phrase boost applied to chunk {}: text contains entity phrase", chunk.chunkId());
+                    }
+                }
 
                 // Combined score
                 double finalScore = keywordContrib + vectorContrib + boostContrib;
