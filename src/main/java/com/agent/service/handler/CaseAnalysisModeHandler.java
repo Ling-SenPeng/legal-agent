@@ -198,9 +198,11 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         Map<Long, EvidenceChunk> chunkMap = new HashMap<>();
         
         for (String retrievalQuery : retrievalQueries) {
-            logger.debug("[CASE_ANALYSIS] Retrieving evidence for: '{}'", retrievalQuery);
+            logger.debug("[CASE_ANALYSIS] Retrieving evidence for pre-planned query: '{}'", retrievalQuery);
             
-            List<EvidenceChunk> queryResults = retrievalService.retrieveEvidence(retrievalQuery, topK);
+            // Use retrieveEvidenceWithoutPlanning to bypass generic planner
+            // CASE_ANALYSIS queries are already optimized and don't need re-planning
+            List<EvidenceChunk> queryResults = retrievalService.retrieveEvidenceWithoutPlanning(retrievalQuery, topK);
             logger.debug("[CASE_ANALYSIS] Retrieved {} chunks from query", queryResults.size());
             
             for (EvidenceChunk chunk : queryResults) {

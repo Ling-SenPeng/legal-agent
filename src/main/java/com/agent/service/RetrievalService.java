@@ -98,6 +98,44 @@ public class RetrievalService {
     }
 
     /**
+     * Retrieve evidence using a pre-planned query without running the generic retrieval planner.
+     * Designed for callers (like CASE_ANALYSIS) that have already optimized their queries
+     * and don't need the generic planner re-optimizing them.
+     * 
+     * Uses the provided query directly as both vector and keyword query,
+     * constructing a minimal RetrievalPlan with no additional planning.
+     * 
+     * @param preplannedQuery The already-optimized query (not subject to planning)
+     * @param topK Number of chunks to retrieve
+     * @return List of evidence chunks sorted by relevance
+     */
+    public List<EvidenceChunk> retrieveEvidenceWithoutPlanning(String preplannedQuery, int topK) {
+        logger.info("RetrievalService: Retrieving {} evidence chunks (pre-planned query, skipping planning phase)", topK);
+        logger.debug("Pre-planned query: '{}'", preplannedQuery);
+        
+        // Create a minimal retrieval plan without running the planner
+        // This preserves the pre-optimized query as-is for both vector and keyword search
+        RetrievalPlan plan = new RetrievalPlan(
+            preplannedQuery,                          // originalQuery
+            preplannedQuery,                          // cleanedQuery (same - already cleaned by caller)
+            "PRE-PLANNED",                            // intent marker
+            List.of(),                                // entities (not needed for pre-planned)
+            List.of(preplannedQuery),                 // keywordQueries (use query as single keyword query)
+            preplannedQuery,                          // vectorQuery (use query directly)
+            "",                                       // answerInstruction (not used in CASE_ANALYSIS)
+            ""                                        // outputFormat (not used in CASE_ANALYSIS)
+        );
+        
+        logger.debug("[RETRIEVAL_PLAN_PREPLANNED] query=\"{}\" (skipped generic planner)", preplannedQuery);
+
+        if (hybridEnabled) {
+            return hybridSearch(plan, topK);
+        } else {
+            return vectorOnlySearch(plan, topK);
+        }
+    }
+
+    /**
      * Retrieve evidence with retrieval plan metadata.
      * Returns both the evidence chunks and the retrieval plan for downstream processing.
      * 

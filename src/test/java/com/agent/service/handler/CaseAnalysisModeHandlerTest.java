@@ -278,6 +278,14 @@ class CaseAnalysisModeHandlerTest {
             }
             return evidenceChunks;
         }
+        
+        @Override
+        public List<EvidenceChunk> retrieveEvidenceWithoutPlanning(String preplannedQuery, int topK) {
+            if (throwException) {
+                throw new RuntimeException("Test service error");
+            }
+            return evidenceChunks;
+        }
     }
     
     /**
