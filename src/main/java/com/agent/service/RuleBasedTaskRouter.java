@@ -10,9 +10,17 @@ import org.springframework.stereotype.Service;
  * Analyzes query content to detect intent and route to appropriate mode:
  * - DRAFTING: imperative/directive verbs (draft, write, create, prepare)
  * - CASE_ANALYSIS: evaluative/predictive language (strength, likely, claim, risk, standard)
+ *   OR family law domain keywords (reimbursement, tracing, exclusive use, etc.)
  * - LEGAL_RESEARCH: research/discovery verbs (find, search, identify, locate, cases)
  * - DOCUMENT_QA: query/extraction verbs (what, explain, show, list, summarize)
  * - DEFAULT: DOCUMENT_QA for ambiguous queries
+ * 
+ * Routing priority (checked in order):
+ * 1. DRAFTING (1+ match)
+ * 2. CASE_ANALYSIS (1+ match) - includes family law domain keywords
+ * 3. LEGAL_RESEARCH (1+ match)
+ * 4. DOCUMENT_QA (1+ match)
+ * 5. DEFAULT to DOCUMENT_QA (low confidence)
  */
 @Service
 public class RuleBasedTaskRouter implements TaskRouter {
@@ -24,10 +32,22 @@ public class RuleBasedTaskRouter implements TaskRouter {
         "draft", "write", "create", "prepare", "compose", "generate"
     };
     
+    // CASE_ANALYSIS keywords include both evaluative language and family law domain terms
+    // Domain keywords (family law): reimbursement, post separation, tracing, exclusive use, etc.
+    // These alone are strong indicators of legal analysis queries
     private static final String[] CASE_ANALYSIS_KEYWORDS = {
+        // Evaluative/analytical language
         "strength", "likely", "strong", "claim", "valid", "risk", "standard",
         "do i have", "analysis", "evaluate", "assess", "determine", "conclude",
-        "based on", "given", "these facts", "position"
+        "based on", "given", "these facts", "position",
+        
+        // Family law domain keywords - legal analysis topics
+        "reimbursement", "post separation", "mortgage reimbursement",
+        "tracing", "separate property", "separate property contribution",
+        "exclusive use", "occupancy offset", "property characterization",
+        "transmutation", "fiduciary duty", "asset disclosure",
+        "community property", "community property dispute", "property division",
+        "property division dispute"
     };
     
     private static final String[] LEGAL_RESEARCH_KEYWORDS = {
@@ -69,13 +89,14 @@ public class RuleBasedTaskRouter implements TaskRouter {
             );
         }
         
-        // CASE_ANALYSIS - evaluative/analytical language
+        // CASE_ANALYSIS - evaluative/analytical language or family law domain keywords
+        // Lower threshold to 1+ because family law keywords alone are strong indicators
         MatchResult analysisMatch = matchKeywords(lowerQuery, CASE_ANALYSIS_KEYWORDS);
-        if (analysisMatch.count >= 2) {
+        if (analysisMatch.count >= 1) {
             return new TaskRoutingResult(
                 TaskMode.CASE_ANALYSIS,
                 Math.min(0.95, 0.7 + analysisMatch.count * 0.1),
-                "Detected analysis/evaluation intent (matched: " + analysisMatch.keywords + ")"
+                "Detected legal analysis intent (matched: " + analysisMatch.keywords + ")"
             );
         }
         

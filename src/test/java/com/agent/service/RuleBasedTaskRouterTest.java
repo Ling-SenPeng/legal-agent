@@ -83,14 +83,26 @@ class RuleBasedTaskRouterTest {
     // ==================== LEGAL_RESEARCH Tests ====================
     
     @Test
-    @DisplayName("Route LEGAL_RESEARCH: Find cases about mortgage reimbursement")
+    @DisplayName("Route LEGAL_RESEARCH: Find cases about case law in general")
     void testLegalResearchExample1() {
-        String query = "Find cases about post-separation mortgage reimbursement.";
+        String query = "Find cases about breach of contract precedents.";
         TaskRoutingResult result = router.route(query);
         
         assertEquals(TaskMode.LEGAL_RESEARCH, result.getMode());
         assertTrue(result.getConfidence() >= 0.7);
         assertTrue(result.getReasoning().contains("research"));
+    }
+    
+    @Test
+    @DisplayName("Route CASE_ANALYSIS: post-separation mortgage reimbursement research")
+    void testCaseAnalysisWithResearchIntent() {
+        // Note: Domain keywords (post-separation mortgage reimbursement) override
+        // generic research verbs (find/cases) because family law analysis is more specific
+        String query = "Find cases about post-separation mortgage reimbursement.";
+        TaskRoutingResult result = router.route(query);
+        
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.getConfidence() >= 0.7);
     }
     
     @Test
@@ -310,5 +322,100 @@ class RuleBasedTaskRouterTest {
         assertTrue(str.contains("LEGAL_RESEARCH"));
         assertTrue(str.contains("confidence="));
         assertTrue(str.contains("reasoning"));
+    }
+
+    // ==================== FAMILY LAW ANALYSIS Tests ====================
+    // Tests for improved task routing with family law domain keywords
+    
+    @Test
+    @DisplayName("Route CASE_ANALYSIS: post separation mortgage reimbursement")
+    void testCaseAnalysisPostSeparationMortgage() {
+        String query = "post separation mortgage reimbursement";
+        TaskRoutingResult result = router.route(query);
+        
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.getConfidence() >= 0.7);
+        assertTrue(result.getReasoning().contains("analysis"));
+    }
+    
+    @Test
+    @DisplayName("Route CASE_ANALYSIS: reimbursement claim for mortgage payments")
+    void testCaseAnalysisReimbursementClaim() {
+        String query = "reimbursement claim for mortgage payments";
+        TaskRoutingResult result = router.route(query);
+        
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.getConfidence() >= 0.7);
+    }
+    
+    @Test
+    @DisplayName("Route CASE_ANALYSIS: exclusive use family residence")
+    void testCaseAnalysisExclusiveUse() {
+        String query = "exclusive use family residence";
+        TaskRoutingResult result = router.route(query);
+        
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.getConfidence() >= 0.7);
+        assertTrue(result.getReasoning().contains("exclusive use"));
+    }
+    
+    @Test
+    @DisplayName("Route CASE_ANALYSIS: tracing separate property contribution")
+    void testCaseAnalysisTracingSeparateProperty() {
+        String query = "tracing separate property contribution";
+        TaskRoutingResult result = router.route(query);
+        
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.getConfidence() >= 0.7);
+    }
+    
+    @Test
+    @DisplayName("Route CASE_ANALYSIS: community property characterization dispute")
+    void testCaseAnalysisCommunityPropertyDispute() {
+        String query = "community property characterization dispute";
+        TaskRoutingResult result = router.route(query);
+        
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.getConfidence() >= 0.7);
+    }
+    
+    @Test
+    @DisplayName("Route CASE_ANALYSIS: transmutation issue")
+    void testCaseAnalysisTransmutation() {
+        String query = "transmutation issue";
+        TaskRoutingResult result = router.route(query);
+        
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.getConfidence() >= 0.7);
+    }
+    
+    @Test
+    @DisplayName("Route CASE_ANALYSIS: fiduciary duty asset disclosure problem")
+    void testCaseAnalysisFiduciaryDuty() {
+        String query = "fiduciary duty asset disclosure problem";
+        TaskRoutingResult result = router.route(query);
+        
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.getConfidence() >= 0.7);
+    }
+    
+    @Test
+    @DisplayName("Route DOCUMENT_QA: what does this declaration say about occupancy")
+    void testDocumentQaAboutOccupancy() {
+        String query = "what does this declaration say about occupancy";
+        TaskRoutingResult result = router.route(query);
+        
+        assertEquals(TaskMode.DOCUMENT_QA, result.getMode());
+        assertTrue(result.getConfidence() >= 0.7);
+    }
+    
+    @Test
+    @DisplayName("Route CASE_ANALYSIS: property division dispute analysis")
+    void testCaseAnalysisPropertyDivisionDispute() {
+        String query = "property division dispute";
+        TaskRoutingResult result = router.route(query);
+        
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.getConfidence() >= 0.7);
     }
 }
