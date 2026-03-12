@@ -76,15 +76,19 @@ public class RetrievalService {
         // Step 1: Generate retrieval plan
         RetrievalPlan plan = retrievalPlanner.plan(question);
         
-        // Log full retrieval plan details
-        logger.info("=== RETRIEVAL PLAN ===");
-        logger.info("  Original query: {}", plan.getOriginalQuery());
-        logger.info("  Cleaned query: {}", plan.getCleanedQuery());
-        logger.info("  Detected intent: {}", plan.getIntent());
-        logger.info("  Keyword queries: {}", plan.getKeywordQueries());
-        logger.info("  Vector query: {}", plan.getVectorQuery());
-        logger.info("  Output format: {}", plan.getOutputFormat());
-        logger.info("  Answer instruction: {}", plan.getAnswerInstruction());
+        // Log structured plan details
+        logger.info("[RETRIEVAL_PLAN] originalQuery=\"{}\" intent={} outputFormat={} entities={} keywordQueries={} entities_count={}",
+            question,
+            plan.getIntent(),
+            plan.getOutputFormat(),
+            plan.getEntities(),
+            plan.getKeywordQueries().size(),
+            plan.getEntities().size());
+        
+        logger.debug("[RETRIEVAL_PLAN_DETAIL] cleanedQuery=\"{}\" vectorQuery=\"{}\" answerInstruction=\"{}\"",
+            plan.getCleanedQuery(),
+            plan.getVectorQuery(),
+            plan.getAnswerInstruction());
 
         if (hybridEnabled) {
             return hybridSearch(plan, topK);
@@ -196,17 +200,22 @@ public class RetrievalService {
         logger.info("Step 6: Neighbor Expansion");
         List<EvidenceChunk> expandedResults = expandNeighborChunksForTimeline(finalResults, plan.getIntent());
         
+        // Create and log structured debug snapshot
+        RetrievalDebugSnapshot snapshot = createDebugSnapshot(plan, keywordResults.size(),
+                vectorResults.size(), mergedMap.size(), finalResults);
+        snapshot.setNeighborExpansionUsed(expandedResults.size() > finalResults.size());
+        snapshot.setVectorFallbackUsed(vectorResults.isEmpty() && plan.isFallbackUsed());
+        logDebugSnapshot(snapshot);
+        
         // Final summary
         logger.info("=== RETRIEVAL SUMMARY ===");
         logger.info("  Intent: {}", plan.getIntent());
-        logger.info("  Keyword queries: {}", plan.getKeywordQueries());
-        logger.info("  Vector query: {}", plan.getVectorQuery());
-        logger.info("  Keyword hits: {}", keywordResults.size());
+        logger.info("  Keyword hits: {} (fallback: {})", keywordResults.size(), plan.isFallbackUsed());
         logger.info("  Vector hits: {}", vectorResults.size());
         logger.info("  Merged chunks: {}", mergedMap.size());
         logger.info("  Final ranked results: {} / {}", finalResults.size(), topK);
-        logger.info("  Neighbor expansion: {} -> {} chunks", finalResults.size(), expandedResults.size());
-        logger.info("  Fallback used: {}", plan.isFallbackUsed());
+        logger.info("  Expanded with neighbors: {} -> {} chunks", finalResults.size(), expandedResults.size());
+        logger.info("  Output format: {}", plan.getOutputFormat());
         logger.info("=== END HYBRID SEARCH ===");
         return expandedResults;
     }
@@ -218,16 +227,21 @@ public class RetrievalService {
         logger.debug("Using vector-only search with planned vector query");
 
         // Step 1: Generate embedding for the planned vector query
-        logger.debug("DEBUG: Generating embedding for vector query: {}", plan.getVectorQuery());
+        logger.debug("Generating embedding for vector query: {}", plan.getVectorQuery());
         List<Double> questionEmbedding = openAiClient.generateEmbedding(plan.getVectorQuery());
-        logger.debug("Question embedding generated, dimension: {}", questionEmbedding.size());
+        logger.debug("Embedding generated, dimension: {}", questionEmbedding.size());
 
         // Step 2: Convert to vector string representation and search
         String embeddingVector = convertToVectorString(questionEmbedding);
         List<EvidenceChunk> chunks = chunkRepository.findTopKSimilarChunks(embeddingVector, topK);
-        logger.info("Retrieved {} evidence chunks", chunks.size());
+        logger.info("Retrieved {} evidence chunks via vector-only search", chunks.size());
 
-        // Step 3: Enrich with proper citation format
+        // Step 3: Create debug snapshot
+        RetrievalDebugSnapshot snapshot = createDebugSnapshot(plan, 0, chunks.size(), chunks.size(), chunks);
+        snapshot.setVectorFallbackUsed(false);
+        logDebugSnapshot(snapshot);
+
+        // Step 4: Enrich with proper citation format
         return chunks.stream()
             .map(chunk -> new EvidenceChunk(
                 chunk.chunkId(),
@@ -299,13 +313,12 @@ public class RetrievalService {
 
         // Step 2: Fallback to cleaned query if no results
         if (combinedResults.isEmpty() && cleanedQuery != null && !cleanedQuery.trim().isEmpty()) {
-            logger.warn("Keyword search returned 0 results. Falling back to cleaned query: {}", cleanedQuery);
+            logger.warn("[KEYWORD_FALLBACK] Planned queries returned 0 hits, trying cleaned query: \"{}\"", cleanedQuery);
             plan.setFallbackUsed(true);
             
-            logger.info("Keyword Search - Attempt 2: Cleaned query fallback");
-            logger.debug("  Executing query: {}", cleanedQuery);
+            logger.debug("Keyword Search - Fallback Attempt 1: Cleaned query");
             List<EvidenceChunk> fallbackResults = chunkRepository.searchByKeyword(cleanedQuery, topK);
-            logger.debug("  Results: {} hits", fallbackResults.size());
+            logger.debug("Cleaned query returned {} hits", fallbackResults.size());
             totalAttempts++;
             
             for (EvidenceChunk chunk : fallbackResults) {
@@ -315,13 +328,12 @@ public class RetrievalService {
 
         // Step 3: Fallback to original query if still no results
         if (combinedResults.isEmpty() && originalQuery != null && !originalQuery.trim().isEmpty()) {
-            logger.warn("Keyword search still returned 0 results. Falling back to original query: {}", originalQuery);
+            logger.warn("[KEYWORD_FALLBACK] Cleaned query returned 0 hits, trying original query: \"{}\"", originalQuery);
             plan.setFallbackUsed(true);
             
-            logger.info("Keyword Search - Attempt 3: Original query fallback");
-            logger.debug("  Executing query: {}", originalQuery);
+            logger.debug("Keyword Search - Fallback Attempt 2: Original query");
             List<EvidenceChunk> fallbackResults = chunkRepository.searchByKeyword(originalQuery, topK);
-            logger.debug("  Results: {} hits", fallbackResults.size());
+            logger.debug("Original query returned {} hits", fallbackResults.size());
             totalAttempts++;
             
             for (EvidenceChunk chunk : fallbackResults) {
@@ -334,8 +346,15 @@ public class RetrievalService {
                 .limit(topK)
                 .toList();
         
-        logger.info("Keyword search completed: {} total hits, {} fallback used: {}",
-                finalResults.size(), totalAttempts, plan.isFallbackUsed());
+        // Log structured keyword search summary
+        logger.debug("[KEYWORD_SEARCH_RESULT] queries_attempted={} unique_chunks={} fallback_used={} avg_score={}",
+            totalAttempts,
+            finalResults.size(),
+            plan.isFallbackUsed(),
+            finalResults.stream()
+                .mapToDouble(ch -> ch.keywordScore() != null ? ch.keywordScore() : 0)
+                .average()
+                .orElse(0.0));
 
         return finalResults;
     }
@@ -507,6 +526,110 @@ public class RetrievalService {
                 topResults.size(), expanded.size() - topResults.size(), expanded.size());
 
         return expanded;
+    }
+
+    /**
+     * Create and populate a RetrievalDebugSnapshot for structured logging.
+     * Captures all retrieval metadata and execution metrics.
+     * 
+     * @param plan The retrieval plan
+     * @param keywordHits Number of keyword search results
+     * @param vectorHits Number of vector search results
+     * @param mergedHits Number of merged unique chunks
+     * @param finalResults The top-K ranked results
+     * @return Populated snapshot ready for logging
+     */
+    private RetrievalDebugSnapshot createDebugSnapshot(RetrievalPlan plan, int keywordHits,
+                                                      int vectorHits, int mergedHits,
+                                                      List<EvidenceChunk> finalResults) {
+        RetrievalDebugSnapshot snapshot = new RetrievalDebugSnapshot(
+            plan.getOriginalQuery(),
+            plan.getCleanedQuery(),
+            plan.getIntent(),
+            plan.getOutputFormat(),
+            plan.getEntities(),
+            plan.getKeywordQueries(),
+            plan.getVectorQuery()
+        );
+
+        // Execution metrics
+        snapshot.setKeywordHits(keywordHits);
+        snapshot.setVectorHits(vectorHits);
+        snapshot.setMergedHits(mergedHits);
+        snapshot.setKeywordFallbackUsed(plan.isFallbackUsed());
+
+        // Detect low confidence (weak vector scores)
+        boolean lowConfidence = finalResults.stream()
+            .anyMatch(ch -> ch.vectorScore() != null && ch.vectorScore() < LOW_CONFIDENCE_VECTOR_THRESHOLD);
+        snapshot.setLowConfidenceDetected(lowConfidence);
+
+        // Top results preview
+        List<RetrievalDebugSnapshot.ResultPreview> previews = finalResults.stream()
+            .limit(3)  // Top 3 for preview
+            .map(ch -> new RetrievalDebugSnapshot.ResultPreview(
+                ch.chunkId(),
+                ch.docId(),
+                ch.pageNo(),
+                ch.keywordScore(),
+                ch.vectorScore(),
+                ch.finalScore(),
+                truncateText(ch.text(), 100),  // 100 char preview
+                null,  // matchedByKeywordQuery - could be enhanced
+                false  // exactPhraseMatched - could be enhanced
+            ))
+            .toList();
+        snapshot.setTopResults(previews);
+
+        return snapshot;
+    }
+
+    /**
+     * Log the retrieval debug snapshot in structured format.
+     * INFO level: concise summary
+     * DEBUG level: detailed chunk previews
+     */
+    private void logDebugSnapshot(RetrievalDebugSnapshot snapshot) {
+        // INFO level: Structured summary
+        logger.info("[RETRIEVAL SNAPSHOT] intent={} entities={} keyword_hits={} vector_hits={} merged_hits={} low_conf={} fallback={}",
+            snapshot.getIntent(),
+            snapshot.getEntities().size(),
+            snapshot.getKeywordHits(),
+            snapshot.getVectorHits(),
+            snapshot.getMergedHits(),
+            snapshot.isLowConfidenceDetected(),
+            snapshot.isKeywordFallbackUsed());
+
+        // DEBUG level: Detailed chunk information
+        if (logger.isDebugEnabled() && !snapshot.getTopResults().isEmpty()) {
+            logger.debug("[RETRIEVAL_CHUNKS] Top merged chunks:");
+            for (int i = 0; i < snapshot.getTopResults().size(); i++) {
+                RetrievalDebugSnapshot.ResultPreview preview = snapshot.getTopResults().get(i);
+                logger.debug("  [{}] chunk_id={} page={} key_score={} vec_score={} final_score={} text=\"{}\"",
+                    (i + 1),
+                    preview.chunkId,
+                    preview.pageNo,
+                    formatScore(preview.keywordScore),
+                    formatScore(preview.vectorScore),
+                    formatScore(preview.finalScore),
+                    preview.textPreview);
+            }
+        }
+    }
+
+    /**
+     * Format a double score for logging (null-safe, 4 decimals)
+     */
+    private String formatScore(Double score) {
+        return score == null ? "null" : String.format("%.4f", score);
+    }
+
+    /**
+     * Truncate text to max length with ellipsis
+     */
+    private String truncateText(String text, int maxLength) {
+        if (text == null) return "";
+        if (text.length() <= maxLength) return text;
+        return text.substring(0, maxLength - 3) + "...";
     }
 
     /**
