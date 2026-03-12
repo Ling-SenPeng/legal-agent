@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.ArrayList;
 
 /**
  * Handler for CASE_ANALYSIS mode.
@@ -193,7 +194,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * @return Merged list of unique evidence chunks
      */
     private List<EvidenceChunk> retrieveAndMergeEvidence(List<String> retrievalQueries, int topK) {
-        // Use map to track unique chunks by ID and keep highest similarity
+        // Use map to deduplicate chunks by ID, keeping the highest similarity score
         Map<Long, EvidenceChunk> chunkMap = new HashMap<>();
         
         for (String retrievalQuery : retrievalQueries) {
@@ -223,9 +224,16 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             }
         }
         
-        // Return merged chunks as list (preserving order via LinkedHashMap would be better, but HashMap is fine)
-        List<EvidenceChunk> mergedChunks = List.copyOf(chunkMap.values());
-        logger.debug("[CASE_ANALYSIS] Total unique chunks after merging: {}", mergedChunks.size());
+        // Convert to list and sort deterministically by similarity score (descending)
+        List<EvidenceChunk> mergedChunks = new ArrayList<>(chunkMap.values());
+        mergedChunks.sort((c1, c2) -> {
+            double sim1 = c1.similarity() != null ? c1.similarity() : 0.0;
+            double sim2 = c2.similarity() != null ? c2.similarity() : 0.0;
+            return Double.compare(sim2, sim1); // descending order (highest score first)
+        });
+        
+        logger.debug("[CASE_ANALYSIS] Total unique chunks after merging: {} (sorted by similarity)",
+            mergedChunks.size());
         
         return mergedChunks;
     }
