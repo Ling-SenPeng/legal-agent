@@ -24,43 +24,50 @@ public class CaseAnalysisRetrievalQueryBuilder implements IssueRetrievalStrategy
     private static final Logger logger = LoggerFactory.getLogger(CaseAnalysisRetrievalQueryBuilder.class);
 
     /**
-     * Issue-specific keyword expansions for retrieval.
+     * Issue-specific fact-driven keywords for retrieval.
      *
-     * Maps issue type → keywords that should be included in retrieval queries.
-     * Allows retrieval to find evidence even if original query doesn't use
-     * these exact keywords.
+     * Maps issue type → concrete fact phrases and actionable terms instead of abstract concepts.
+     * Focuses on specific behaviors, transactions, and observable actions that constitute evidence.
+     * Avoids generic legal terms ("claim", "dispute", "analysis") in favor of factual specifics.
      */
     private static final Map<LegalIssueType, List<String>> ISSUE_KEYWORDS = Map.ofEntries(
         Map.entry(LegalIssueType.REIMBURSEMENT, Arrays.asList(
-            "reimbursement", "reimburse", "payment", "expense", "spent",
-            "separated", "post-separation", "mortgage", "benefit"
+            "paid mortgage", "mortgage payment", "down payment", "paid expense",
+            "post-separation expense", "reimbursement", "receipt", "invoice",
+            "mortgage paid", "contributed to mortgage", "paid for improvement"
         )),
         Map.entry(LegalIssueType.SUPPORT, Arrays.asList(
-            "support", "alimony", "spousal", "child support", "guideline",
-            "income", "earning", "duration", "length of marriage"
+            "child support payment", "spousal support", "income documentation",
+            "earning capacity", "employed at", "monthly income", "financial support",
+            "years of marriage", "duration of relationship"
         )),
         Map.entry(LegalIssueType.PROPERTY_CHARACTERIZATION, Arrays.asList(
-            "property", "characterization", "community", "separate",
-            "acquisition", "down payment", "contribution", "title"
+            "down payment made", "down payment contributed", "acquired the property",
+            "purchased before marriage", "inherited property", "property",
+            "community property", "property title", "deed shows"
         )),
         Map.entry(LegalIssueType.TRACING, Arrays.asList(
-            "tracing", "trace", "separate property", "commingled", "source",
-            "funds", "contribution", "documentation", "evidence"
+            "separate property commingled", "source of funds", "inherited funds",
+            "gift received", "premarital contribution", "documented source",
+            "traced to separate account", "account statements"
         )),
         Map.entry(LegalIssueType.CUSTODY, Arrays.asList(
-            "custody", "parenting", "children", "best interests", "schedule",
-            "arrangement", "care", "preference", "stability"
+            "parenting schedule", "custody arrangement", "best interests of child",
+            "school records", "doctor visits", "childcare provided", "custody",
+            "overnight care", "stable environment", "child lives with", "custody agreement"
         )),
         Map.entry(LegalIssueType.EXCLUSIVE_USE, Arrays.asList(
-            "exclusive use", "family home", "occupancy", "inability", "set-off",
-            "dwelling", "residence", "possession"
+            "occupied the family home", "exclusive occupancy", "unable to reside",
+            "resided in the property", "set-off against support", "housing exclusive use",
+            "family residence occupied by"
         )),
         Map.entry(LegalIssueType.RESTRAINING_ORDER, Arrays.asList(
-            "restraining order", "protective order", "abuse", "threat",
-            "harassment", "stalking", "injunction", "violence"
+            "threatening behavior", "harassment occurred", "abuse allegation",
+            "protective order", "abuse", "documented threat", "witness to abuse",
+            "police report of abuse", "domestic violence incident"
         )),
         Map.entry(LegalIssueType.OTHER, Arrays.asList(
-            "legal", "issue", "claim", "dispute", "question", "analysis"
+            "occurred", "documented", "evidence shows", "records indicate", "payments made"
         ))
     );
 
@@ -68,13 +75,12 @@ public class CaseAnalysisRetrievalQueryBuilder implements IssueRetrievalStrategy
      * Build optimized retrieval queries from cleaned query and detected issues.
      *
      * Strategy:
-     * 1. Extract key terms from cleaned query (multi-word phrases + individual words)
-     * 2. For each detected issue, add issue-specific keywords
-     * 3. Generate subqueries combining:
-     *    - Core terms from cleaned query
-     *    - Issue-specific keywords
-     *    - Various combinations to improve retrieval recall
-     * 4. Deduplicate and return
+     * 1. Prioritize fact-driven phrases from issue-specific keywords
+     * 2. Extract key terms from cleaned query (multi-word phrases + individual words)
+     * 3. Extract fact-driven action words from cleaned query (paid, lived, worked, etc.)
+     * 4. For each detected issue, add fact-specific subqueries
+     * 5. Combine core terms with factual phrases to improve recall
+     * 6. Deduplicate and return
      *
      * @param cleanedQuery Query after analysis noise removal
      * @param issues Detected legal issues from query
@@ -91,29 +97,49 @@ public class CaseAnalysisRetrievalQueryBuilder implements IssueRetrievalStrategy
 
         // Extract key terms from cleaned query
         List<String> coreTerms = extractKeyTerms(cleanedQuery);
+        
+        // Extract fact-driven action words (paid, lived, worked, etc.)
+        List<String> factDrivenTerms = extractFactDrivenTerms(cleanedQuery);
 
-        // Add issue-specific subqueries
+        // Add issue-specific fact-driven subqueries (prioritized over generic keywords)
         for (CaseIssue issue : issues) {
             List<String> issueKeywords = ISSUE_KEYWORDS.getOrDefault(
                 issue.getType(),
                 List.of()
             );
 
-            // Subquery 1: Issue-specific keywords alone
+            // Subquery 1A: Most specific fact phrase alone (highest priority)
             if (!issueKeywords.isEmpty()) {
-                String issueQuery = String.join(" ", issueKeywords.stream()
-                    .limit(3) // Limit to top 3 keywords
-                    .collect(Collectors.toList()));
-                queries.add(issueQuery);
+                String firstFactPhrase = issueKeywords.get(0);
+                queries.add(firstFactPhrase);
             }
 
-            // Subquery 2: Core terms + first issue keyword
-            if (!coreTerms.isEmpty() && !issueKeywords.isEmpty()) {
-                String combined = coreTerms.get(0) + " " + issueKeywords.get(0);
+            // Subquery 1B: Fact-driven term from query + issue-specific fact phrase
+            if (!factDrivenTerms.isEmpty() && !issueKeywords.isEmpty()) {
+                String combined = factDrivenTerms.get(0) + " " + issueKeywords.get(0);
                 queries.add(combined);
             }
 
-            // Subquery 3: Multiple core terms (if available)
+            // Subquery 2: Multiple fact phrases together for specific case patterns
+            if (issueKeywords.size() >= 2) {
+                // Look for single-word keywords (like "reimbursement", "custody") to ensure coverage
+                List<String> singleWordKeywords = issueKeywords.stream()
+                    .filter(kw -> !kw.contains(" "))
+                    .limit(2)
+                    .collect(Collectors.toList());
+                
+                if (!singleWordKeywords.isEmpty()) {
+                    String singleKeywords = String.join(" ", singleWordKeywords);
+                    queries.add(singleKeywords);
+                } else {
+                    // Fallback: use multi-word phrases
+                    String multiFactPhrase = String.join(" ",
+                        issueKeywords.stream().limit(2).collect(Collectors.toList()));
+                    queries.add(multiFactPhrase);
+                }
+            }
+
+            // Subquery 3: Core terms combined (context from original query) - only if available
             if (coreTerms.size() >= 2) {
                 String multiTermQuery = String.join(" ",
                     coreTerms.stream().limit(3).collect(Collectors.toList()));
@@ -137,7 +163,7 @@ public class CaseAnalysisRetrievalQueryBuilder implements IssueRetrievalStrategy
             .limit(5) // Max 5 retrieval queries to prevent explosion
             .collect(Collectors.toList());
 
-        logger.debug("[CaseAnalysisRetrievalQueryBuilder] Built {} retrieval queries " +
+        logger.debug("[CaseAnalysisRetrievalQueryBuilder] Built {} fact-driven retrieval queries " +
                 "from cleanedQuery='{}' and {} issues: {}",
             finalQueries.size(), cleanedQuery, issues.size(), finalQueries);
 
@@ -162,6 +188,40 @@ public class CaseAnalysisRetrievalQueryBuilder implements IssueRetrievalStrategy
             .filter(word -> word.length() > 3) // Keep words > 3 chars
             .distinct()
             .limit(8) // Max 8 key terms
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * Extract fact-driven terms from cleaned query.
+     *
+     * Identifies concrete action/state words that represent factual events or conditions.
+     * Examples: "paid", "purchased", "lived", "worked", "owned", "received"
+     * These are prioritized over abstract concepts for evidence retrieval.
+     *
+     * @param cleanedQuery The cleaned query
+     * @return List of fact-driven action/state terms
+     */
+    private List<String> extractFactDrivenTerms(String cleanedQuery) {
+        if (cleanedQuery == null || cleanedQuery.isBlank()) {
+            return List.of();
+        }
+
+        // Action/state words that indicate concrete facts
+        Set<String> factDrivenWords = Set.of(
+            "paid", "payment", "payments", "mortgage", "expense", "spent",
+            "purchased", "bought", "acquired", "owned",
+            "lived", "resided", "occupied", "occupying", "occupancy",
+            "worked", "employed", "employment", "earned", "earning",
+            "received", "gift", "inherited",
+            "contributed", "contribution", "provided",
+            "document", "documented", "evidence", "receipt", "invoice",
+            "schedule", "arrangement", "care", "childcare",
+            "threatened", "harassment", "abuse", "abused"
+        );
+
+        return Arrays.stream(cleanedQuery.split("\\s+"))
+            .filter(word -> factDrivenWords.contains(word.toLowerCase()))
+            .distinct()
             .collect(Collectors.toList());
     }
 }
