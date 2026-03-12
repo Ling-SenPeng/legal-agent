@@ -2,6 +2,7 @@ package com.agent.service.analysis;
 
 import com.agent.model.EvidenceChunk;
 import com.agent.model.analysis.CaseFact;
+import com.agent.model.analysis.FactPolarity;
 import com.agent.model.analysis.LegalIssueType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -117,12 +118,16 @@ public class RuleBasedCaseFactExtractor implements CaseFactExtractor {
             // Check if sentence contains relevant patterns
             if (containsFactualContent(trimmed)) {
                 double confidence = calculateConfidence(trimmed);
+                LegalIssueType issue = relevantIssue != null ? relevantIssue : inferIssueFromFact(trimmed);
+                
+                // Determine polarity with cautious heuristics (default to UNKNOWN)
+                FactPolarity polarity = determinePolarity(trimmed, issue);
                 
                 CaseFact fact = new CaseFact(
                     trimmed,
-                    true,  // Assume favorable initially (can be refined)
+                    polarity,
                     formatSourceReference(chunk),
-                    relevantIssue != null ? relevantIssue : inferIssueFromFact(trimmed)
+                    issue
                 );
                 
                 facts.add(fact);
@@ -222,5 +227,129 @@ public class RuleBasedCaseFactExtractor implements CaseFactExtractor {
             chunk.docId(), 
             chunk.chunkId(), 
             chunk.pageNo());
+    }
+
+    /**
+     * Determine fact polarity (SUPPORTING, ADVERSE, NEUTRAL, UNKNOWN) based on content.
+     * 
+     * Uses cautious heuristics - defaults to UNKNOWN when polarity is unclear.
+     * Only marks as SUPPORTING when clear positive indicators are present.
+     * Only marks as ADVERSE when clear negative indicators are present.
+     * 
+     * @param factText The fact text
+     * @param issue The relevant legal issue
+     * @return FactPolarity determination
+     */
+    private FactPolarity determinePolarity(String factText, LegalIssueType issue) {
+        String lower = factText.toLowerCase();
+        
+        // Negative indicators (adverse facts)
+        if (containsAdverseIndicators(lower)) {
+            return FactPolarity.ADVERSE;
+        }
+        
+        // Positive indicators (supporting facts)
+        if (containsSupportingIndicators(lower, issue)) {
+            return FactPolarity.SUPPORTING;
+        }
+        
+        // Check if the fact is procedural/neutral (neither helps nor hurts)
+        if (isNeutralFact(lower)) {
+            return FactPolarity.NEUTRAL;
+        }
+        
+        // Default to UNKNOWN when polarity cannot be determined
+        return FactPolarity.UNKNOWN;
+    }
+
+    /**
+     * Check if fact contains adverse indicators.
+     */
+    private boolean containsAdverseIndicators(String lower) {
+        // Negative behavioral patterns
+        if (lower.contains("failed") || lower.contains("failure") || 
+            lower.contains("missed") || lower.contains("violated") || 
+            lower.contains("abuse") || lower.contains("neglect") ||
+            lower.contains("denied") || lower.contains("absent") ||
+            lower.contains("negligent") || lower.contains("irresponsible")) {
+            return true;
+        }
+        
+        // Negative financial indicators
+        if (lower.contains("debt") || lower.contains("default") || 
+            lower.contains("unpaid") || lower.contains("overdue")) {
+            return true;
+        }
+        
+        // Negative relationship indicators
+        if (lower.contains("harassment") || lower.contains("hostile") ||
+            lower.contains("conflict") || lower.contains("dispute")) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
+     * Check if fact contains supporting indicators.
+     */
+    private boolean containsSupportingIndicators(String lower, LegalIssueType issue) {
+        // Positive behavioral patterns
+        if (lower.contains("worked") || lower.contains("employed") ||
+            lower.contains("stable") || lower.contains("responsible") ||
+            lower.contains("completed") || lower.contains("provided")) {
+            return true;
+        }
+        
+        // Time/effort indicators
+        if (lower.contains("hours") && (lower.contains("60") || lower.contains("50") || lower.contains("40"))) {
+            return true;
+        }
+        
+        // Educational/care indicators for custody
+        if (issue == LegalIssueType.CUSTODY && 
+            (lower.contains("school") || lower.contains("education") ||
+             lower.contains("doctor") || lower.contains("medical") ||
+             lower.contains("homework") || lower.contains("parent"))) {
+            return true;
+        }
+        
+        // Payment/contribution indicators for reimbursement
+        if (issue == LegalIssueType.REIMBURSEMENT && 
+            (lower.contains("paid") || lower.contains("contributed") ||
+             lower.contains("mortgage") || lower.contains("payment"))) {
+            return true;
+        }
+        
+        // For property characterization, acquisition timing is supporting for separate property
+        if (issue == LegalIssueType.PROPERTY_CHARACTERIZATION &&
+            (lower.contains("before marriage") || lower.contains("prior to marriage") ||
+             lower.contains("premarital") || lower.contains("separate property"))) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
+     * Check if fact is neutral (neither supporting nor adverse).
+     * Typically factual information that provides context but doesn't inherently favor either side.
+     */
+    private boolean isNeutralFact(String lower) {
+        // Dates without context
+        if (DATE_PATTERN.matcher(lower).find() && 
+            !lower.contains("paid") && !lower.contains("worked") && 
+            !lower.contains("failed") && !lower.contains("missed")) {
+            return true;
+        }
+        
+        // Property information without positive/negative indicators
+        if ((lower.contains("property") || lower.contains("home")) && 
+            !lower.contains("paid") && !lower.contains("purchased") &&
+            !lower.contains("debt") && !lower.contains("acquired")) {
+            return true;
+        }
+        
+        return false;
     }
 }

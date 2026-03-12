@@ -8,23 +8,52 @@ package com.agent.model.analysis;
  */
 public class CaseFact {
     private final String description;
-    private final boolean favorable;  // true if favorable to client, false if adverse
+    private final FactPolarity polarity;  // SUPPORTING, ADVERSE, NEUTRAL, or UNKNOWN
     private final String sourceReference;  // Reference to evidence chunk or document
     private final LegalIssueType relevantIssue;  // Issue this fact relates to
 
-    public CaseFact(String description, boolean favorable, String sourceReference, LegalIssueType relevantIssue) {
+    public CaseFact(String description, FactPolarity polarity, String sourceReference, LegalIssueType relevantIssue) {
         this.description = description;
-        this.favorable = favorable;
+        this.polarity = polarity != null ? polarity : FactPolarity.UNKNOWN;
         this.sourceReference = sourceReference;
         this.relevantIssue = relevantIssue;
+    }
+    
+    /**
+     * Convenience constructor for backwards compatibility.
+     * Converts boolean favorable to FactPolarity.
+     */
+    @Deprecated
+    public CaseFact(String description, boolean favorable, String sourceReference, LegalIssueType relevantIssue) {
+        this(description, 
+            favorable ? FactPolarity.SUPPORTING : FactPolarity.ADVERSE,
+            sourceReference, 
+            relevantIssue
+        );
     }
 
     public String getDescription() {
         return description;
     }
 
+    public FactPolarity getPolarity() {
+        return polarity;
+    }
+    
+    /**
+     * Check if this fact is favorable to the client's position.
+     * Convenience method - equivalent to polarity == SUPPORTING.
+     */
     public boolean isFavorable() {
-        return favorable;
+        return polarity == FactPolarity.SUPPORTING;
+    }
+    
+    /**
+     * Check if this fact is adverse to the client's position.
+     * Convenience method - equivalent to polarity == ADVERSE.
+     */
+    public boolean isAdverse() {
+        return polarity == FactPolarity.ADVERSE;
     }
 
     public String getSourceReference() {
@@ -39,7 +68,7 @@ public class CaseFact {
     public String toString() {
         return "CaseFact{" +
                 "description='" + description + '\'' +
-                ", favorable=" + favorable +
+                ", polarity=" + polarity +
                 ", issue=" + relevantIssue +
                 ", source='" + sourceReference + '\'' +
                 '}';

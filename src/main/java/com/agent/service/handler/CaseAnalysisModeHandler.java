@@ -251,21 +251,28 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         List<CaseFact> facts = context.getRelevantFacts();
         List<MissingFact> missingFactsList = context.getMissingFacts();
         
-        // Count favorable vs unfavorable facts
-        long favorableFacts = facts.stream()
+        // Count facts by polarity (supporting vs adverse)
+        long supportingFacts = facts.stream()
             .filter(CaseFact::isFavorable)
             .count();
-        long unfavorableFacts = facts.stream()
-            .filter(f -> !f.isFavorable())
+        long adverseFacts = facts.stream()
+            .filter(CaseFact::isAdverse)
+            .count();
+        long neutralFacts = facts.stream()
+            .filter(f -> f.getPolarity() == com.agent.model.analysis.FactPolarity.NEUTRAL)
+            .count();
+        long unknownFacts = facts.stream()
+            .filter(f -> f.getPolarity() == com.agent.model.analysis.FactPolarity.UNKNOWN)
             .count();
         long missingFacts = missingFactsList.size();
         
-        logger.debug("[CASE_ANALYSIS] Fact analysis - Favorable: {}, Unfavorable: {}, Missing: {}",
-            favorableFacts, unfavorableFacts, missingFacts);
+        logger.debug("[CASE_ANALYSIS] Fact analysis - Supporting: {}, Adverse: {}, Neutral: {}, Unknown: {}, Missing: {}",
+            supportingFacts, adverseFacts, neutralFacts, unknownFacts, missingFacts);
         
-        // Calculate confidence based on available facts
-        double baseFacts = (double) (favorableFacts + unfavorableFacts);
-        double factAvailability = baseFacts > 0 ? (baseFacts / (baseFacts + missingFacts)) : 0.5;
+        // Calculate confidence based on determined facts (exclude UNKNOWN)
+        double determinedFacts = (double) (supportingFacts + adverseFacts + neutralFacts);
+        double factAvailability = (determinedFacts + unknownFacts) > 0 ? 
+            (determinedFacts / (determinedFacts + unknownFacts + missingFacts)) : 0.5;
         
         // Average issue confidence
         double avgIssueConfidence = issues.isEmpty() ? 0.5 :
@@ -279,8 +286,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         // Assess strength level
         CaseAnalysisResult.StrengthLevel strengthLevel = assessStrength(
-            favorableFacts,
-            unfavorableFacts,
+            supportingFacts,
+            adverseFacts,
             missingFacts,
             issues.size()
         );
@@ -306,8 +313,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * @return StrengthLevel assessment
      */
     private CaseAnalysisResult.StrengthLevel assessStrength(
-        long favorable,
-        long unfavorable,
+        long supporting,
+        long adverse,
         long missing,
         int issueCount
     ) {
@@ -315,33 +322,33 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             return CaseAnalysisResult.StrengthLevel.MODERATE;
         }
         
-        long total = favorable + unfavorable;
+        long total = supporting + adverse;
         if (total == 0) {
             return CaseAnalysisResult.StrengthLevel.WEAK;
         }
         
-        double favorableRatio = (double) favorable / total;
+        double supportingRatio = (double) supporting / total;
         double missingRatio = missing / (double) (total + missing);
         
-        // Strong case: mostly favorable facts, few missing
-        if (favorableRatio > 0.75 && missingRatio < 0.2) {
+        // Strong case: mostly supporting facts, few missing
+        if (supportingRatio > 0.75 && missingRatio < 0.2) {
             return CaseAnalysisResult.StrengthLevel.VERY_STRONG;
         }
-        if (favorableRatio > 0.65 && missingRatio < 0.3) {
+        if (supportingRatio > 0.65 && missingRatio < 0.3) {
             return CaseAnalysisResult.StrengthLevel.STRONG;
         }
         
         // Moderate case: mixed facts
-        if (favorableRatio >= 0.4 && favorableRatio <= 0.65) {
+        if (supportingRatio >= 0.4 && supportingRatio <= 0.65) {
             return CaseAnalysisResult.StrengthLevel.MODERATE;
         }
         
-        // Weak case: mostly unfavorable or many missing
-        if (favorableRatio < 0.4 || missingRatio > 0.5) {
+        // Weak case: mostly adverse or many missing
+        if (supportingRatio < 0.4 || missingRatio > 0.5) {
             return CaseAnalysisResult.StrengthLevel.WEAK;
         }
         
-        if (favorableRatio < 0.25) {
+        if (supportingRatio < 0.25) {
             return CaseAnalysisResult.StrengthLevel.VERY_WEAK;
         }
         
