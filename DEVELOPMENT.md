@@ -2,7 +2,172 @@
 
 ## Architecture Overview
 
-The agent implements a classical RAG (Retrieval-Augmented Generation) pipeline with strict citation enforcement:
+The agent uses a **Task Mode Router Pattern** to orchestrate specialized analysis modes:
+
+```
+┌─────────────┐
+│   Query     │
+└──────┬──────┘
+       ↓
+┌──────────────────────────────────────────┐
+│ TaskModeOrchestrator                     │
+│ ─────────────────────────────────────── │
+│ • Detect query intent/mode               │
+│ • Route to mode-specific handler         │
+│ • Return ModeExecutionResult             │
+└──────┬───────────────────────────────────┘
+       ↓
+   [Mode Type]
+    ├─ CASE_ANALYSIS ──→ CaseAnalysisModeHandler (V1)
+    ├─ DRAFTING     ──→ DraftingModeHandler
+    ├─ VERIFICATION ──→ VerificationModeHandler
+    └─ [Future]    ──→ CustomHandlers
+```
+
+### CASE_ANALYSIS Mode (V1)
+
+The CASE_ANALYSIS mode implements a complete legal analysis pipeline with 6 steps:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ CASE_ANALYSIS V1 Pipeline                                   │
+├──────────────────────────────────────────────────────────────┤
+│ Step 1: Evidence Retrieval    → Top-K chunks via vector search
+│ Step 2: Context Building      → Extract issues & facts
+│ Step 3: Strength Assessment   → 5-level scale evaluation
+│ Step 4: Result Generation     → Confidence scoring
+│ Step 5: Answer Formatting     → 6-section structured report
+│ Step 6: Metadata Assembly     → Issues, facts, strength metrics
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Answer Format** (6 Required Sections):
+1. **Issue Summary** - Key legal issues identified
+2. **Applicable Legal Standards** - Relevant case law/statutes
+3. **Application Summary** - How facts map to legal standards
+4. **Counterarguments** - Opposing viewpoints/weaknesses
+5. **Missing Evidence** - Critical facts not found in documents
+6. **Tentative Conclusion** - Preliminary analysis (with disclaimer)
+
+**Strength Assessment Logic** (5 Levels):
+- **VERY_STRONG**: ≥75% favorable facts, <20% missing
+- **STRONG**: ≥65% favorable facts, <30% missing
+- **MODERATE**: 40-65% favorable facts balance
+- **WEAK**: <40% favorable facts OR >50% missing
+- **VERY_WEAK**: <25% favorable facts
+
+**Confidence Calculation**:
+- `60% × avg(issue_confidence) + 40% × (favorable_facts / (favorable + missing))`
+
+**Metadata Format**:
+```
+Mode: CASE_ANALYSIS | Issues: 2 | Facts: 8 | Strength: STRONG | Confidence: 78.50%
+```
+
+## Task Mode Router & Handler Architecture
+
+### TaskModeOrchestrator
+
+**File**: `service/orchestration/TaskModeOrchestrator.java`
+
+Central routing component that detects query intent and dispatches to mode-specific handlers:
+
+```java
+public ModeExecutionResult executeQuery(String query, int topK) {
+    // 1. Detect mode from query
+    TaskMode mode = detectMode(query);
+    
+    // 2. Get appropriate handler
+    TaskModeHandler handler = handlerMap.get(mode);
+    
+    // 3. Execute and return result
+    return handler.execute(query, topK);
+}
+```
+
+**Mode Detection Strategy**:
+- Pattern matching on query keywords
+- Confidence scoring (0.0-1.0)
+- Fallback to default mode if no confident match
+
+**Routing Table**:
+| Mode | Keywords | Handler |
+|------|----------|---------|
+| CASE_ANALYSIS | "analyze", "strength", "claim", "legal position" | CaseAnalysisModeHandler |
+| DRAFTING | "draft", "write", "compose", "response" | DraftingModeHandler |
+| VERIFICATION | "verify", "check", "validate", "citations" | VerificationModeHandler |
+| QUICK_ANSWER | (default) | QuickAnswerHandler |
+
+### TaskModeHandler Interface
+
+All mode handlers implement `TaskModeHandler`:
+
+```java
+public interface TaskModeHandler {
+    TaskMode getMode();
+    ModeExecutionResult execute(String query, int topK);
+}
+```
+
+**Common Return Type** - `ModeExecutionResult`:
+```java
+public record ModeExecutionResult(
+    TaskMode mode,
+    String answer,
+    String metadata  // Optional structured metadata
+) {
+    public boolean isSuccess() { /* ... */ }
+    public String getErrorMessage() { /* ... */ }
+}
+```
+
+### CaseAnalysisModeHandler (V1)
+
+**File**: `service/handler/CaseAnalysisModeHandler.java`
+
+Implements complete legal analysis pipeline orchestration:
+
+```
+execute(query, topK)
+  ├─ Step 1: retrievalService.retrieveEvidence(query, topK)
+  │         → List<EvidenceChunk>
+  │
+  ├─ Step 2: contextBuilder.buildContext(query, chunks)
+  │         → CaseAnalysisContext (issues, facts, legal standards)
+  │
+  ├─ Step 3: generateAnalysisResult(context)
+  │         → CaseAnalysisResult (strength, confidence)
+  │
+  ├─ Step 4: formatAnalysisAnswer(query, context, result)
+  │         → String (6-section report)
+  │
+  ├─ Step 5: Build metadata
+  │         → "Mode: CASE_ANALYSIS | Issues: X | Facts: Y | ..."
+  │
+  └─ Step 6: Return ModeExecutionResult(CASE_ANALYSIS, answer, metadata)
+```
+
+**Key Methods**:
+- `execute()` - Main orchestration entry point
+- `generateAnalysisResult()` - Strength assessment & result generation
+- `assessStrength()` - 5-level strength evaluation
+- `formatAnalysisAnswer()` - Structured answer formatting
+- `counterclaim()` - Generate opposing arguments
+
+**Integration Points**:
+- `RetrievalService` - Semantic search
+- `CaseAnalysisContextBuilder` - Issue & fact extraction
+- Comprehensive logging at DEBUG/INFO levels
+
+### Other Handler Classes
+
+**DraftingModeHandler** (TBD): Focus on answer composition
+**VerificationModeHandler** (TBD): Citation verification
+**QuickAnswerHandler** (TBD): Fast fact retrieval
+
+## Classical RAG Pipeline (Base Layer)
+
+The agent also implements a classical RAG (Retrieval-Augmented Generation) pipeline with strict citation enforcement:
 
 ```
 ┌─────────────┐
@@ -51,6 +216,45 @@ The agent implements a classical RAG (Retrieval-Augmented Generation) pipeline w
 ```
 
 ## Key Components
+
+### Handler Integration with AgentService
+
+**File**: `service/AgentService.java`
+
+Main orchestration layer coordinates handlers with RAG pipeline:
+
+```java
+@Service
+public class AgentService {
+    private TaskModeOrchestrator orchestrator;
+    
+    public AgentQueryResponse processQuery(AgentQueryRequest request) {
+        // Route to mode handler
+        ModeExecutionResult modeResult = orchestrator.executeQuery(
+            request.getQuestion(), 
+            request.getTopK()
+        );
+        
+        // Convert to agent response
+        return new AgentQueryResponse(
+            modeResult.getAnswer(),
+            modeResult.getMetadata(),
+            modeResult.getMode(),
+            /* RAG metadata if applicable */
+        );
+    }
+}
+```
+
+**Execution Flow**:
+1. `AgentController` receives HTTP request
+2. Delegates to `AgentService.processQuery()`
+3. `AgentService` calls `TaskModeOrchestrator.executeQuery()`
+4. `TaskModeOrchestrator` routes to mode-specific `TaskModeHandler`
+5. Handler executes specialized logic
+6. Returns `ModeExecutionResult`
+7. Service wraps result in `AgentQueryResponse`
+8. Controller returns JSON to client
 
 ### 1. RetrievalService
 **File**: `service/RetrievalService.java`

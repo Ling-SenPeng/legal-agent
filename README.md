@@ -1,10 +1,25 @@
 # Legal Evidence-Grounded Agent MVP
 
-A production-quality evidence-grounded agent for legal documents built with Spring Boot 3.x. This MVP implements a complete retrieval-augmented generation (RAG) pipeline with strict citation enforcement for legal document analysis.
+A production-quality evidence-grounded agent for legal documents built with Spring Boot 3.x. This MVP implements a **multi-mode architecture** with specialized handlers for different analysis tasks, plus a complete retrieval-augmented generation (RAG) pipeline.
 
 ## Overview
 
-The agent orchestrates a 4-step pipeline to answer questions about legal documents with citations:
+### Multi-Mode Architecture (V1)
+
+The agent uses a **Task Mode Router** pattern to dispatch queries to specialized handlers:
+
+- **CASE_ANALYSIS Mode** (V1 ✅): Complete legal analysis pipeline
+  - Evidence retrieval → Context building → Strength assessment → Answer formatting
+  - 6-section structured reports (Issue Summary, Legal Standards, Application, Counterarguments, Missing Evidence, Tentative Conclusion)
+  - Confidence & strength metrics
+  
+- **DRAFTING Mode** (Planned): Focus on answer composition
+- **VERIFICATION Mode** (Planned): Citation verification
+- **QUICK_ANSWER Mode** (Default): Fast fact retrieval
+
+### Classical RAG Pipeline (Base Layer)
+
+Standard 4-step RAG for general queries:
 
 1. **Retrieval**: Find top-K most similar document chunks using pgvector semantic search
 2. **Drafting**: Generate an answer using OpenAI with strict citation requirements
@@ -39,7 +54,15 @@ legal-agent/
 │   │   │   │   ├── AgentQueryRequest.java
 │   │   │   │   ├── AgentQueryResponse.java
 │   │   │   │   ├── EvidenceChunk.java
+│   │   │   │   ├── ModeExecutionResult.java    (Handler return type)
+│   │   │   │   ├── TaskMode.java               (Mode enumeration)
 │   │   │   │   ├── VerificationReport.java
+│   │   │   │   ├── analysis/                   (Case analysis models)
+│   │   │   │   │   ├── CaseAnalysisContext.java
+│   │   │   │   │   ├── CaseAnalysisResult.java
+│   │   │   │   │   ├── CaseIssue.java
+│   │   │   │   │   ├── CaseFact.java
+│   │   │   │   │   └── LegalIssueType.java
 │   │   │   │   ├── entity/
 │   │   │   │   │   ├── PdfDocument.java
 │   │   │   │   │   └── PdfChunk.java
@@ -53,13 +76,33 @@ legal-agent/
 │   │   │       ├── OpenAiClient.java           (OpenAI API integration)
 │   │   │       ├── RetrievalService.java       (Vector search)
 │   │   │       ├── DraftingService.java        (LLM call)
-│   │   │       └── VerificationService.java    (Citation enforcement)
+│   │   │       ├── VerificationService.java    (Citation enforcement)
+│   │   │       ├── orchestration/
+│   │   │       │   ├── TaskModeOrchestrator.java     (Router)
+│   │   │       │   ├── TaskModeHandler.java          (Handler interface)
+│   │   │       │   └── handler/
+│   │   │       │       └── CaseAnalysisModeHandler.java (V1 impl)
+│   │   │       └── analysis/
+│   │   │           ├── CaseAnalysisContextBuilder.java  (Interface)
+│   │   │           ├── RuleBasedCaseAnalysisContextBuilder.java
+│   │   │           ├── CaseIssueExtractor.java         (Interface)
+│   │   │           ├── RuleBasedCaseIssueExtractor.java
+│   │   │           ├── CaseFactExtractor.java          (Interface)
+│   │   │           └── RuleBasedCaseFactExtractor.java
 │   │   └── resources/
 │   │       ├── application.yml
 │   │       └── application-test.yml
 │   └── test/
 │       └── java/com/agent/
-│           └── AgentIntegrationTest.java
+│           ├── AgentIntegrationTest.java
+│           └── service/
+│               ├── handler/
+│               │   └── CaseAnalysisModeHandlerTest.java (7 tests)
+│               └── analysis/
+│                   ├── CaseAnalysisFactExtractionTest.java
+│                   ├── RuleBasedCaseAnalysisContextBuilderTest.java
+│                   ├── RuleBasedCaseIssueExtracterTest.java
+│                   └── ...
 ├── pom.xml
 └── README.md
 ```
@@ -164,43 +207,76 @@ WITH (lists = 100);
 
 ## API Endpoints
 
-### Query Agent
+### Task Mode Query (Multi-Mode Architecture)
 
 **POST** `/agent/query`
 
-Request:
+**Auto-Mode Detection** (TaskModeOrchestrator):
+The agent automatically detects query intent and routes to the appropriate handler.
+
+**Example 1: CASE_ANALYSIS Mode** (Legal analysis query)
 ```json
 {
-    "question": "What was the payment amount?",
-    "topK": 8,
-    "filters": null
+    "question": "What is the strength of my reimbursement claim? I paid $40,000 in post-separation mortgage payments.",
+    "topK": 10
 }
 ```
 
 Response:
 ```json
 {
-    "answer": "According to the agreement, John Smith agreed to pay $10,000 on January 15, 2023. [CIT doc=1 chunk=5 p=1-1]. Payment was split 50% upfront and 50% upon completion. [CIT doc=1 chunk=6 p=2-2].",
+    "answer": "=== CASE ANALYSIS REPORT ===\n\nISSUE SUMMARY\nYou have raised a reimbursement claim for post-separation mortgage payments totaling $40,000...\n\nAPPLICABLE LEGAL STANDARDS\nRequest for reimbursement evaluated under Epstein factors...\n\nAPPLICATION SUMMARY\nBased on evidence provided...\n\nCOUNTERARGUMENTS\nOpposing party may argue...\n\nMISSING EVIDENCE\nThe following critical facts are not found in current evidence:\n- Documentation of property title status\n- Timeline of occupancy by other spouse\n\nTENTATIVE CONCLUSION\nPreliminary analysis suggests STRONG legal position (78% confidence)...\n\nPRELIMINARY ANALYSIS ONLY - Not legal advice.",
+    "taskMode": "CASE_ANALYSIS",
+    "metadata": "Mode: CASE_ANALYSIS | Issues: 1 | Facts: 5 | Strength: STRONG | Confidence: 78.50%",
+    "evidence": [
+        {
+            "chunkId": 42,
+            "docId": 3,
+            "similarity": 0.91,
+            "text": "Paid $40,000 in post-separation mortgage...",
+            "citations": "[CIT doc=3 chunk=42 p=5-6]"
+        }
+    ],
+    "processingTimeMs": 892
+}
+```
+
+**Example 2: DEFAULT Mode** (Quick fact retrieval)
+```json
+{
+    "question": "What was the payment amount?",
+    "topK": 8
+}
+```
+
+Response:
+```json
+{
+    "answer": "According to the agreement, John Smith agreed to pay $10,000 on January 15, 2023. [CIT doc=1 chunk=5 p=1-1].",
+    "taskMode": "QUICK_ANSWER",
     "evidence": [
         {
             "chunkId": 5,
             "docId": 1,
-            "pageNo": 1,
-            "pageStart": 1,
-            "pageEnd": 1,
-            "text": "John Smith agreed to pay $10,000 on January 15, 2023, as per the contract terms.",
             "similarity": 0.95,
-            "citations": "[CIT doc=1 chunk=5 p=1-1]"
+            "text": "John Smith agreed to pay $10,000..."
         }
     ],
     "verification": {
         "passed": true,
-        "missingCitationLines": [],
-        "notes": "All factual claims have proper citations."
-    },
-    "processingTimeMs": 1234
+        "missingCitationLines": []
+    }
 }
 ```
+
+### Mode Keywords (Query Routing)
+
+| Mode | Keywords |
+|------|----------|
+| CASE_ANALYSIS | "analyze", "strength", "claim", "legal position", "position on" |
+| DRAFTING | "draft", "write", "compose", "response to" |
+| VERIFICATION | "verify", "check", "validate", "citations" |
+| QUICK_ANSWER | (default) |
 
 ### Health Check
 
@@ -367,37 +443,70 @@ agent:
 
 ## Testing
 
-Run integration tests with Testcontainers:
+### Test Suite
+
+**Total: 107 tests** (all passing)
+
+Run all tests:
+```bash
+mvn test
+```
+
+**Test Coverage by Component**:
+
+| Component | Tests | File |
+|-----------|-------|------|
+| CaseAnalysisModeHandler (V1) | 7 | `CaseAnalysisModeHandlerTest.java` |
+| RuleBasedCaseAnalysisContextBuilder | 14 | `RuleBasedCaseAnalysisContextBuilderTest.java` |
+| RuleBasedCaseFactExtractor | 27 | `RuleBasedCaseFactExtractionTest.java` |
+| RuleBasedCaseIssueExtractor | 25 | `RuleBasedCaseIssueExtracterTest.java` |
+| RuleBasedTaskRouter | 26 | `RuleBasedTaskRouterTest.java` |
+| RetrievalService | 7 | `RetrievalServiceTest.java` |
+| **Total** | **107** | |
+
+**CaseAnalysisModeHandler Tests** (7 new tests):
+- ✅ Handler returns correct TaskMode
+- ✅ Answer includes all 6 required sections
+- ✅ Metadata format verified
+- ✅ Handles missing evidence gracefully
+- ✅ Exception handling with error messages
+- ✅ Strength assessment accuracy
+- ✅ Comprehensive analysis with recommendations
+
+### Running Tests with Testcontainers
+
+Tests use an embedded PostgreSQL container with pgvector. No external database required:
 
 ```bash
 mvn test
 ```
 
-Tests use an embedded PostgreSQL container with pgvector. No external database required.
+Container setup is automatic - tests start PostgreSQL, create schema, run tests, and clean up.
 
 ## Agent Flow Diagram
 
 ```
 User Query
     ↓
-[Retrieval Service]
-  - Generate embedding for question (OpenAI)
-  - pgvector similarity search (top-K chunks)
+[TaskModeOrchestrator]
+  Detect query intent & route to handler
     ↓
-[Drafting Service]
-  - Call OpenAI with evidence + strict prompt
-  - LLM generates answer with citations
+[Mode Handler Dispatch]
+├─ CASE_ANALYSIS → CaseAnalysisModeHandler
+│  ├─ [Retrieval] - Get evidence
+│  ├─ [Context Builder] - Extract issues & facts
+│  ├─ [Strength Assessment] - Evaluate 5-level scale
+│  └─ [Answer Formatter] - 6-section report
+│
+├─ DRAFTING → DraftingModeHandler (TBD)
+├─ VERIFICATION → VerificationModeHandler (TBD)
+└─ QUICK_ANSWER → [Original RAG Pipeline]
+    ├─ [Retrieval] - pgvector search
+    ├─ [Drafting] - LLM answer generation
+    ├─ [Verification] - Citation check
+    └─ [Repair] (if needed) - Fix citations
     ↓
-[Verification Service]
-  - Parse answer into lines
-  - Detect factual claims (keywords, numbers, dates)
-  - Check for [CIT ...] tokens
-    ↓
-[Repair Service] (if verification failed)
-  - LLM call to fix missing citations
-  - Or downgrade to "Needs evidence"
-    ↓
-Response (answer + evidence + verification)
+Response (answer + metadata + evidence)
 ```
 
 ## Troubleshooting
