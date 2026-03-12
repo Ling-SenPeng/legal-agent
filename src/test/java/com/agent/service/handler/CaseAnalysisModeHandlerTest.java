@@ -5,6 +5,9 @@ import com.agent.model.ModeExecutionResult;
 import com.agent.model.TaskMode;
 import com.agent.model.analysis.*;
 import com.agent.service.analysis.CaseAnalysisContextBuilder;
+import com.agent.service.analysis.CaseAnalysisQueryCleaner;
+import com.agent.service.analysis.CaseAnalysisRetrievalQueryBuilder;
+import com.agent.service.analysis.CaseIssueExtractor;
 import com.agent.service.RetrievalService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -25,12 +28,24 @@ class CaseAnalysisModeHandlerTest {
     private CaseAnalysisModeHandler handler;
     private TestRetrievalService testRetrievalService;
     private TestCaseAnalysisContextBuilder testContextBuilder;
+    private TestQueryCleaner testQueryCleaner;
+    private TestQueryBuilder testQueryBuilder;
+    private TestIssueExtractor testIssueExtractor;
 
     @BeforeEach
     void setUp() {
         testRetrievalService = new TestRetrievalService();
         testContextBuilder = new TestCaseAnalysisContextBuilder();
-        handler = new CaseAnalysisModeHandler(testRetrievalService, testContextBuilder);
+        testQueryCleaner = new TestQueryCleaner();
+        testQueryBuilder = new TestQueryBuilder();
+        testIssueExtractor = new TestIssueExtractor();
+        handler = new CaseAnalysisModeHandler(
+            testRetrievalService, 
+            testContextBuilder,
+            testQueryCleaner,
+            testQueryBuilder,
+            testIssueExtractor
+        );
     }
 
     // ==================== CORE FUNCTIONALITY Tests ====================
@@ -273,6 +288,84 @@ class CaseAnalysisModeHandlerTest {
         @Override
         public CaseAnalysisContext buildContext(String query, List<EvidenceChunk> evidenceChunks) {
             return context;
+        }
+    }
+
+    /**
+     * Test double for CaseAnalysisQueryCleaner - returns cleaned version of query
+     */
+    static class TestQueryCleaner extends CaseAnalysisQueryCleaner {
+        @Override
+        public String stripAnalysisNoise(String query) {
+            // Simple implementation - just remove common noise phrases
+            if (query == null) return "";
+            return query.toLowerCase()
+                .replace("based on these facts", "")
+                .replace("do i have", "")
+                .replace("how strong is my", "")
+                .trim()
+                .replaceAll("\\s+", " ");
+        }
+
+        @Override
+        public boolean hasSignificantContent(String cleanedQuery) {
+            if (cleanedQuery == null || cleanedQuery.isBlank()) return false;
+            return cleanedQuery.split("\\s+").length >= 2;
+        }
+    }
+
+    /**
+     * Test double for CaseAnalysisRetrievalQueryBuilder - generates multiple retrieval queries
+     */
+    static class TestQueryBuilder extends CaseAnalysisRetrievalQueryBuilder {
+        @Override
+        public List<String> buildQueries(String cleanedQuery, List<CaseIssue> issues) {
+            // For testing, just return a couple of basic queries
+            if (cleanedQuery == null || cleanedQuery.isBlank()) {
+                return List.of();
+            }
+            
+            List<String> queries = new java.util.ArrayList<>();
+            queries.add(cleanedQuery); // Original cleaned query
+            
+            // Add issue-specific variations
+            if (!issues.isEmpty()) {
+                CaseIssue firstIssue = issues.get(0);
+                queries.add(cleanedQuery + " " + firstIssue.getType().name().toLowerCase());
+            }
+            
+            return queries;
+        }
+    }
+
+    /**
+     * Test double for CaseIssueExtractor - extracts issues from query
+     */
+    static class TestIssueExtractor implements CaseIssueExtractor {
+        @Override
+        public List<CaseIssue> extractIssues(String caseQuery) {
+            // Simple keyword-based extraction for testing
+            if (caseQuery == null) return List.of();
+            
+            List<CaseIssue> issues = new java.util.ArrayList<>();
+            String queryLower = caseQuery.toLowerCase();
+            
+            if (queryLower.contains("reimbursement") || queryLower.contains("payment")) {
+                issues.add(new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.85, "reimbursement"));
+            }
+            if (queryLower.contains("custody") || queryLower.contains("children")) {
+                issues.add(new CaseIssue(LegalIssueType.CUSTODY, "Custody", 0.80, "custody"));
+            }
+            if (queryLower.contains("property") || queryLower.contains("characterization")) {
+                issues.add(new CaseIssue(LegalIssueType.PROPERTY_CHARACTERIZATION, "Property", 0.75, "property"));
+            }
+            
+            return issues;
+        }
+
+        @Override
+        public List<CaseIssue> extractIssues(String caseQuery, String context) {
+            return extractIssues(caseQuery);
         }
     }
 }

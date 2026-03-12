@@ -7,12 +7,19 @@ import com.agent.model.analysis.*;
 import com.agent.service.TaskModeHandler;
 import com.agent.service.RetrievalService;
 import com.agent.service.analysis.CaseAnalysisContextBuilder;
+import com.agent.service.analysis.CaseAnalysisQueryCleaner;
+import com.agent.service.analysis.CaseAnalysisRetrievalQueryBuilder;
+import com.agent.service.analysis.CaseIssueExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /**
  * Handler for CASE_ANALYSIS mode.
@@ -34,13 +41,22 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     
     private final RetrievalService retrievalService;
     private final CaseAnalysisContextBuilder contextBuilder;
+    private final CaseAnalysisQueryCleaner queryCleaner;
+    private final CaseAnalysisRetrievalQueryBuilder queryBuilder;
+    private final CaseIssueExtractor issueExtractor;
 
     public CaseAnalysisModeHandler(
         RetrievalService retrievalService,
-        CaseAnalysisContextBuilder contextBuilder
+        CaseAnalysisContextBuilder contextBuilder,
+        CaseAnalysisQueryCleaner queryCleaner,
+        CaseAnalysisRetrievalQueryBuilder queryBuilder,
+        CaseIssueExtractor issueExtractor
     ) {
         this.retrievalService = retrievalService;
         this.contextBuilder = contextBuilder;
+        this.queryCleaner = queryCleaner;
+        this.queryBuilder = queryBuilder;
+        this.issueExtractor = issueExtractor;
     }
 
     @Override
@@ -51,6 +67,15 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     /**
      * Execute CASE_ANALYSIS query to evaluate legal position and predict outcomes.
      * 
+     * Implements query preprocessing pipeline:
+     * 1. Strip analysis framing noise from query
+     * 2. Extract legal issues from cleaned query
+     * 3. Build optimized retrieval queries using cleaned query + issues
+     * 4. Retrieve evidence for each query and merge results
+     * 5. Build analysis context with merged evidence
+     * 6. Generate case analysis result with strength assessment
+     * 7. Format and return answer
+     * 
      * @param query The user's analytical question
      * @param topK Number of relevant facts/authorities to consider
      * @return ModeExecutionResult with analysis findings
@@ -60,12 +85,41 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         logger.info("[CASE_ANALYSIS] Processing: {}", query);
         
         try {
-            // Step 1: Retrieve evidence using existing retrieval service
-            logger.debug("[CASE_ANALYSIS] Step 1: Retrieving evidence");
-            List<EvidenceChunk> evidenceChunks = retrievalService.retrieveEvidence(query, topK);
+            // ===== PREPROCESSING PHASE =====
             
-            if (evidenceChunks.isEmpty()) {
-                logger.warn("[CASE_ANALYSIS] No evidence found for query: {}", query);
+            // Step 1: Strip analysis framing noise from query
+            logger.debug("[CASE_ANALYSIS] Step 1: Stripping analysis noise");
+            String cleanedQuery = queryCleaner.stripAnalysisNoise(query);
+            logger.debug("[CASE_ANALYSIS] Original: '{}' → Cleaned: '{}'", query, cleanedQuery);
+            
+            // Validate that cleaning didn't remove all content
+            if (!queryCleaner.hasSignificantContent(cleanedQuery)) {
+                logger.warn("[CASE_ANALYSIS] Cleaned query has insufficient content, falling back to original");
+                cleanedQuery = query;
+            }
+            
+            // Step 2: Extract legal issues from cleaned query
+            logger.debug("[CASE_ANALYSIS] Step 2: Extracting legal issues");
+            List<CaseIssue> issues = issueExtractor.extractIssues(cleanedQuery);
+            logger.info("[CASE_ANALYSIS] Identified {} legal issues", issues.size());
+            
+            // Step 3: Build optimized retrieval queries
+            logger.debug("[CASE_ANALYSIS] Step 3: Building optimized retrieval queries");
+            List<String> retrievalQueries = queryBuilder.buildQueries(cleanedQuery, issues);
+            logger.info("[CASE_ANALYSIS] Generated {} retrieval queries", retrievalQueries.size());
+            
+            for (int i = 0; i < retrievalQueries.size(); i++) {
+                logger.debug("[CASE_ANALYSIS]   Query {}: '{}'", i + 1, retrievalQueries.get(i));
+            }
+            
+            // ===== RETRIEVAL PHASE =====
+            
+            // Step 4: Retrieve evidence for each query and merge results
+            logger.debug("[CASE_ANALYSIS] Step 4: Retrieving evidence for {} queries", retrievalQueries.size());
+            List<EvidenceChunk> mergedEvidenceChunks = retrieveAndMergeEvidence(retrievalQueries, topK);
+            
+            if (mergedEvidenceChunks.isEmpty()) {
+                logger.warn("[CASE_ANALYSIS] No evidence found across all retrieval queries");
                 return new ModeExecutionResult(
                     TaskMode.CASE_ANALYSIS,
                     "No relevant case facts found in the evidence collection. Unable to perform case analysis.",
@@ -73,28 +127,31 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                 );
             }
             
-            logger.info("[CASE_ANALYSIS] Retrieved {} evidence chunks", evidenceChunks.size());
+            logger.info("[CASE_ANALYSIS] Retrieved and merged {} evidence chunks from {} queries",
+                mergedEvidenceChunks.size(), retrievalQueries.size());
             
-            // Step 2: Build analysis context (orchestrates issue extraction, fact extraction, missing fact identification)
-            logger.debug("[CASE_ANALYSIS] Step 2: Building case analysis context");
-            CaseAnalysisContext context = contextBuilder.buildContext(query, evidenceChunks);
+            // ===== ANALYSIS PHASE =====
+            
+            // Step 5: Build analysis context (orchestrates fact extraction, missing fact identification)
+            logger.debug("[CASE_ANALYSIS] Step 5: Building case analysis context");
+            CaseAnalysisContext context = contextBuilder.buildContext(query, mergedEvidenceChunks);
             
             logger.info("[CASE_ANALYSIS] Context built with {} issues and {} facts",
                 context.getIdentifiedIssues().size(),
                 context.getRelevantFacts().size());
             
-            // Step 3: Generate case analysis result with strength assessment
-            logger.debug("[CASE_ANALYSIS] Step 3: Generating analysis result");
+            // Step 6: Generate case analysis result with strength assessment
+            logger.debug("[CASE_ANALYSIS] Step 6: Generating analysis result");
             CaseAnalysisResult result = generateAnalysisResult(context);
             
             logger.info("[CASE_ANALYSIS] Analysis complete - Strength: {}, Confidence: {}",
                 result.getStrengthLevel(),
                 String.format("%.2f", result.getConfidenceScore()));
             
-            // Step 4: Format answer with analysis sections
+            // Step 7: Format answer with analysis sections
             String answer = formatAnalysisAnswer(query, context, result);
             
-            // Step 5: Build metadata
+            // Build metadata
             String metadata = String.format(
                 "Mode: CASE_ANALYSIS | Issues: %d | Facts: %d | Strength: %s | Confidence: %.2f%% | Query: %s",
                 context.getIdentifiedIssues().size(),
@@ -104,7 +161,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                 query
             );
             
-            // Step 6: Return result
+            // Return result
             return new ModeExecutionResult(
                 TaskMode.CASE_ANALYSIS,
                 answer,
@@ -118,6 +175,54 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                 "Error performing case analysis: " + e.getMessage()
             );
         }
+    }
+
+    /**
+     * Retrieve evidence for multiple queries and merge results.
+     * 
+     * Deduplicates chunks by ID and keeps the highest similarity score
+     * for chunks that appear in multiple retrieval results.
+     * 
+     * @param retrievalQueries List of retrieval queries to execute
+     * @param topK Number of results per query
+     * @return Merged list of unique evidence chunks
+     */
+    private List<EvidenceChunk> retrieveAndMergeEvidence(List<String> retrievalQueries, int topK) {
+        // Use map to track unique chunks by ID and keep highest similarity
+        Map<Long, EvidenceChunk> chunkMap = new HashMap<>();
+        
+        for (String retrievalQuery : retrievalQueries) {
+            logger.debug("[CASE_ANALYSIS] Retrieving evidence for: '{}'", retrievalQuery);
+            
+            List<EvidenceChunk> queryResults = retrievalService.retrieveEvidence(retrievalQuery, topK);
+            logger.debug("[CASE_ANALYSIS] Retrieved {} chunks from query", queryResults.size());
+            
+            for (EvidenceChunk chunk : queryResults) {
+                Long chunkId = chunk.chunkId();
+                
+                if (chunkMap.containsKey(chunkId)) {
+                    // Chunk already exists - keep version with higher similarity
+                    EvidenceChunk existing = chunkMap.get(chunkId);
+                    double existingSimilarity = existing.similarity() != null ? existing.similarity() : 0.0;
+                    double newSimilarity = chunk.similarity() != null ? chunk.similarity() : 0.0;
+                    
+                    if (newSimilarity > existingSimilarity) {
+                        logger.debug("[CASE_ANALYSIS] Updating chunk similarity: {:.2f} → {:.2f}",
+                            existingSimilarity, newSimilarity);
+                        chunkMap.put(chunkId, chunk);
+                    }
+                } else {
+                    // New unique chunk
+                    chunkMap.put(chunkId, chunk);
+                }
+            }
+        }
+        
+        // Return merged chunks as list (preserving order via LinkedHashMap would be better, but HashMap is fine)
+        List<EvidenceChunk> mergedChunks = List.copyOf(chunkMap.values());
+        logger.debug("[CASE_ANALYSIS] Total unique chunks after merging: {}", mergedChunks.size());
+        
+        return mergedChunks;
     }
 
     /**
