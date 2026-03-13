@@ -1848,10 +1848,11 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     ) {
         List<CaseFact> supportingFacts = new ArrayList<>();
         
-        // Get favorable facts
+        // Get favorable facts and apply strict quality filtering BEFORE rule-element assignment
         List<CaseFact> favorableFacts = context.getRelevantFacts().stream()
             .filter(CaseFact::isFavorable)
             .filter(f -> f.getRelevantIssue() == issueType)
+            .filter(this::isStrictlyHighQualityFact)
             .toList();
         
         // Simple keyword matching to map facts to elements
@@ -1873,7 +1874,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             else if (elementLower.contains("custody") && factLower.contains("custody")) supportingFacts.add(fact);
         }
         
-        return supportingFacts.stream().distinct().toList();
+        // Keep at most 2 high-quality supporting facts per rule element
+        return supportingFacts.stream().distinct().limit(2).toList();
     }
     
     /**
@@ -1972,6 +1974,127 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         }
         
         return counterclaim.toString();
+    }
+
+    /**
+     * Strict fact-quality filter applied BEFORE rule-element assignment.
+     * 
+     * Rejects snippets if ANY of the following are true:
+     * - Length < 20 characters unless clearly meaningful (contains paid/mortgage/payment)
+     * - Numeric-only or mostly numeric (> 70% digits/currency)
+     * - Table-header patterns without context
+     * - Generic form boilerplate ("real and personal $", "check the box", "petitioner:", "respondent:")
+     * - OCR garbage with very low alphabetic ratio (< 50%)
+     * 
+     * Prefers snippets with:
+     * - "paid", "mortgage", "payment"
+     * - Property addresses or significant length
+     * - Explicit who-paid wording
+     * 
+     * This filter applies BEFORE facts are assigned to rule elements.
+     * 
+     * @param fact The case fact to evaluate
+     * @return true if the fact is strictly high-quality, false otherwise
+     */
+    private boolean isStrictlyHighQualityFact(CaseFact fact) {
+        String desc = fact.getDescription();
+        if (desc == null || desc.isEmpty()) {
+            logFactFilter(desc, false, "null or empty");
+            return false;
+        }
+        
+        String desc_trimmed = desc.trim();
+        String descLower = desc_trimmed.toLowerCase();
+        
+        // Rejection 1: Length check - too short unless meaningful
+        if (desc_trimmed.length() < 20) {
+            boolean hasMeaningfulKeywords = descLower.contains("paid") || 
+                descLower.contains("mortgage") || descLower.contains("payment") ||
+                (descLower.contains("$") && (descLower.contains("paid") || descLower.contains("property")));
+            if (!hasMeaningfulKeywords) {
+                logFactFilter(desc, false, "too short (< 20 chars) without meaningful keywords");
+                return false;
+            }
+        }
+        
+        // Rejection 2: Pure numeric or mostly numeric
+        String noWhitespace = desc_trimmed.replaceAll("\\s+", "");
+        long numericChars = noWhitespace.chars()
+            .filter(c -> Character.isDigit(c) || c == ',' || c == '.' || c == '$')
+            .count();
+        double numericRatio = noWhitespace.isEmpty() ? 0 : (double) numericChars / noWhitespace.length();
+        if (numericRatio > 0.7) {
+            logFactFilter(desc, false, "numeric-only or mostly numeric (" + String.format("%.1f%%", numericRatio * 100) + ")");
+            return false;
+        }
+        
+        // Rejection 3: Pure numeric sequences
+        if (noWhitespace.matches("^[0-9,.$]+$")) {
+            logFactFilter(desc, false, "pure numeric sequence");
+            return false;
+        }
+        
+        // Rejection 4: Table-header patterns without context
+        if ((descLower.matches("^(date paid|description|principal|interest|escrow).*") &&
+             !descLower.contains("mortgage") && !descLower.contains("payment") && 
+             !descLower.contains("$")) ||
+            descLower.matches("^\\w+:\\s*$")) {
+            logFactFilter(desc, false, "isolated table header without context");
+            return false;
+        }
+        
+        // Rejection 5: Generic form boilerplate
+        if ((descLower.contains("real and personal") && noWhitespace.endsWith("$")) ||
+            descLower.contains("check the box") ||
+            descLower.startsWith("petitioner:") ||
+            descLower.startsWith("respondent:") ||
+            (descLower.matches("^[a-z]\\.\\s*$") || (descLower.matches("^\\([a-z]\\).*") && desc_trimmed.length() < 20))) {
+            logFactFilter(desc, false, "generic form boilerplate");
+            return false;
+        }
+        
+        // Rejection 6: OCR garbage - very low alphabetic ratio
+        long alphabeticChars = desc_trimmed.chars()
+            .filter(Character::isLetter)
+            .count();
+        double alphabeticRatio = desc_trimmed.isEmpty() ? 0 : (double) alphabeticChars / desc_trimmed.length();
+        if (alphabeticRatio < 0.5) {
+            logFactFilter(desc, false, "OCR garbage / broken text (" + String.format("%.1f%%", alphabeticRatio * 100) + " alphabetic)");
+            return false;
+        }
+        
+        // Acceptance: Snippets with meaningful payment/property keywords
+        if (descLower.contains("paid") || descLower.contains("mortgage") || 
+            descLower.contains("payment") || descLower.contains("property")) {
+            logFactFilter(desc, true, "contains meaningful legal keywords");
+            return true;
+        }
+        
+        // Acceptance: Significant length with reasonable alphabetic content
+        if (desc_trimmed.length() >= 20 && alphabeticRatio >= 0.6) {
+            logFactFilter(desc, true, "sufficient length and alphabetic content");
+            return true;
+        }
+        
+        logFactFilter(desc, false, "failed all acceptance criteria");
+        return false;
+    }
+    
+    /**
+     * Log fact filtering decisions for debugging purposes.
+     * Format: [FACT_FILTER] STATUS | fact_description | reason: explanation
+     * 
+     * @param factDesc The fact description
+     * @param accepted Whether the fact was accepted
+     * @param reason The reason for acceptance/rejection
+     */
+    private void logFactFilter(String factDesc, boolean accepted, String reason) {
+        if (logger.isDebugEnabled()) {
+            String status = accepted ? "ACCEPTED" : "REJECTED";
+            String truncated = factDesc == null ? "null" : 
+                (factDesc.length() > 60 ? factDesc.substring(0, 60) + "..." : factDesc);
+            logger.debug("[FACT_FILTER] {} | {} | reason: {}", status, truncated, reason);
+        }
     }
 
     /**

@@ -267,6 +267,93 @@ class CaseAnalysisModeHandlerTest {
     }
     
     @Test
+    @DisplayName("Strictly filters noisy snippets BEFORE rule-element assignment")
+    void testStrictFactFilterBeforeRuleElementAssignment() {
+        // Given: Query with noisy and quality evidence chunks
+        String query = "Reimbursement analysis?";
+        
+        // Create evidence chunks that will be converted to facts
+        EvidenceChunk qualityChunk1 = createTestChunk(
+            "I paid $20,000 in post-separation mortgage payments on community property.",
+            1L, 1, "Page 1"
+        );
+        EvidenceChunk qualityChunk2 = createTestChunk(
+            "The payment was made in 2023 from my separate property account.",
+            2L, 1, "Page 1"
+        );
+        EvidenceChunk noisyChunk1 = createTestChunk("23", 3L, 1, "Page 2");  // Pure number
+        EvidenceChunk noisyChunk2 = createTestChunk("real and personal $", 4L, 1, "Page 2");  // Boilerplate
+        EvidenceChunk noisyChunk3 = createTestChunk("Description", 5L, 1, "Page 2");  // Table header
+        EvidenceChunk noisyChunk4 = createTestChunk("check the box", 6L, 1, "Page 2");  // Form boilerplate
+        EvidenceChunk noisyChunk5 = createTestChunk("petitioner:", 7L, 1, "Page 2");  // Form label
+        EvidenceChunk noisyChunk6 = createTestChunk("1500", 8L, 1, "Page 3");  // Pure number
+        EvidenceChunk qualityChunk3 = createTestChunk(
+            "Community property mortgaged during marriage for home purchase.",
+            9L, 1, "Page 3"
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("I paid $20,000 in post-separation mortgage payments on community property", 
+                true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("The payment was made in 2023 from my separate property account", 
+                true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Community property mortgaged during marriage for home purchase", 
+                true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Reimbursement claim analysis."
+        );
+        
+        // Provide evidence chunks - mix of quality and noisy
+        testRetrievalService.setEvidenceChunks(List.of(
+            qualityChunk1, noisyChunk1, noisyChunk2, qualityChunk2, 
+            noisyChunk3, noisyChunk4, noisyChunk5, noisyChunk6, qualityChunk3
+        ));
+        testContextBuilder.setContext(context);
+        
+        // When
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.isSuccess(), "Result should be successful");
+        String answer = result.getAnswer();
+        assertNotNull(answer);
+        
+        // Verify quality facts with meaningful content are included
+        assertTrue(answer.contains("post-separation mortgage payments") || 
+                   answer.contains("separate property account") ||
+                   answer.contains("mortgaged during marriage"),
+            "At least one quality fact about payment/property should be included");
+        
+        // Verify NOISY SNIPPETS are completely excluded from APPLICATION TO RULE section
+        // By checking that they don't appear as supporting facts
+        String applicationSection = answer.substring(
+            answer.indexOf("APPLICATION TO RULE"),
+            answer.indexOf("COUNTERARGUMENTS"));
+        
+        // These should NOT appear in the Supporting Facts rendering
+        assertFalse(applicationSection.contains("Supporting Facts:\n  - 23"), 
+            "Pure numeric '23' should be rejected by strict filter");
+        assertFalse(applicationSection.contains("Supporting Facts:\n  - real and personal $"), 
+            "Boilerplate 'real and personal $' should be rejected by strict filter");
+        assertFalse(applicationSection.contains("Supporting Facts:\n  - Description"), 
+            "Isolated table header 'Description' should be rejected by strict filter");
+        assertFalse(applicationSection.contains("Supporting Facts:\n  - check the box"), 
+            "Form boilerplate 'check the box' should be rejected by strict filter");
+        assertFalse(applicationSection.contains("Supporting Facts:\n  - petitioner:"), 
+            "Form boilerplate 'petitioner:' should be rejected by strict filter");
+        assertFalse(applicationSection.contains("Supporting Facts:\n  - 1500"), 
+            "Pure numeric '1500' should be rejected by strict filter");
+    }
+    
+    @Test
     @DisplayName("Generates STRONG strength assessment when favorable facts dominate")
     void testAssessesStrongClaim() {
         // Given
