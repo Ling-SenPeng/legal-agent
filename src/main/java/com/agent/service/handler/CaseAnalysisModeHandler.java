@@ -4,6 +4,7 @@ import com.agent.model.ModeExecutionResult;
 import com.agent.model.TaskMode;
 import com.agent.model.EvidenceChunk;
 import com.agent.model.PaymentRecord;
+import com.agent.model.CaseProfile;
 import com.agent.model.analysis.*;
 import com.agent.model.analysis.authority.AuthoritySummary;
 import com.agent.model.analysis.authority.LegalAuthority;
@@ -67,9 +68,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     // ThreadLocal to store evidence chunks during execution for access in nested methods
     private final ThreadLocal<List<EvidenceChunk>> currentEvidenceChunks = new ThreadLocal<>();
     
-    // ThreadLocal to store Date of Separation (DOS) for filtering payment records
-    // Format: "MM/DD/YYYY" or "MM/DD/YY" (same as payment dates in records)
-    private final ThreadLocal<String> currentDateOfSeparation = new ThreadLocal<>();
+    // ThreadLocal to store CaseProfile (contains DOS and other case-level facts)
+    private final ThreadLocal<CaseProfile> currentCaseProfile = new ThreadLocal<>();
 
     public CaseAnalysisModeHandler(
         RetrievalService retrievalService,
@@ -236,8 +236,32 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         } finally {
             // Clean up ThreadLocal to prevent memory leaks
             currentEvidenceChunks.remove();
-            currentDateOfSeparation.remove();
+            currentCaseProfile.remove();
         }
+    }
+    
+    /**
+     * Set the CaseProfile for the current case.
+     * Includes case-level facts like Date of Separation for reimbursement analysis.
+     * 
+     * @param caseProfile The CaseProfile with DOS and other case facts
+     */
+    public void setCaseProfile(CaseProfile caseProfile) {
+        if (caseProfile != null) {
+            currentCaseProfile.set(caseProfile);
+            if (caseProfile.hasSeparationDate()) {
+                logger.info("[CASE_PROFILE] dos={}", caseProfile.getDateOfSeparation());
+            }
+        }
+    }
+    
+    /**
+     * Get the current CaseProfile.
+     * 
+     * @return CaseProfile or null if not set
+     */
+    public CaseProfile getCaseProfile() {
+        return currentCaseProfile.get();
     }
     
     /**
@@ -245,22 +269,26 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * Format: "MM/DD/YYYY" or "MM/DD/YY" (same as payment dates)
      * Only payments AFTER DOS are included in post-separation reimbursement evidence.
      * 
+     * Creates a CaseProfile with the given DOS and sets it.
+     * (Convenience method for backward compatibility)
+     * 
      * @param dateOfSeparation DOS string in format MM/DD/YYYY or MM/DD/YY
      */
     public void setDateOfSeparation(String dateOfSeparation) {
         if (dateOfSeparation != null && !dateOfSeparation.isBlank()) {
-            currentDateOfSeparation.set(dateOfSeparation);
-            logger.debug("[DOS_FILTER] Date of Separation set to: {}", dateOfSeparation);
+            currentCaseProfile.set(new CaseProfile(dateOfSeparation));
+            logger.info("[CASE_PROFILE] dos={}", dateOfSeparation);
         }
     }
     
     /**
-     * Get the current Date of Separation.
+     * Get the current Date of Separation from CaseProfile.
      * 
      * @return DOS string or null if not set
      */
     public String getDateOfSeparation() {
-        return currentDateOfSeparation.get();
+        CaseProfile profile = currentCaseProfile.get();
+        return profile != null ? profile.getDateOfSeparation() : null;
     }
 
     /**
@@ -1961,7 +1989,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * Extract PaymentRecords from evidence chunks for REIMBURSEMENT issues.
      * Filters for mortgage/payment-related chunks and extracts structured payment data.
      * 
-     * Applies DOS (Date of Separation) filtering:
+     * Applies DOS (Date of Separation) filtering using CaseProfile:
      * - Only includes payments made AFTER DOS as post-separation reimbursement evidence
      * - Records before DOS are excluded with reason "before DOS"
      * 
@@ -1969,7 +1997,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      */
     private List<CaseFact> extractPaymentRecordsAsFacts() {
         List<CaseFact> paymentFacts = new ArrayList<>();
-        String dos = currentDateOfSeparation.get();
+        CaseProfile profile = currentCaseProfile.get();
+        String dos = profile != null ? profile.getDateOfSeparation() : null;
         
         List<EvidenceChunk> chunks = currentEvidenceChunks.get();
         if (chunks == null || chunks.isEmpty()) {

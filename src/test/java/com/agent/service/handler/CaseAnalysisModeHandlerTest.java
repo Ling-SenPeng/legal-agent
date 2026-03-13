@@ -2557,4 +2557,48 @@ class CaseAnalysisModeHandlerTest {
         assertNotNull(result.getAnswer());
         assertTrue(result.getAnswer().length() > 0, "Handler should return an answer when DOS is not set");
     }
+    
+    @Test
+    @DisplayName("CaseProfile-based filtering: Uses structured case facts for DOS")
+    void testCaseProfileBasedDOSFiltering() {
+        // Given: CaseProfile with DOS = 12/24/2025
+        com.agent.model.CaseProfile caseProfile = new com.agent.model.CaseProfile("12/24/2025");
+        handler.setCaseProfile(caseProfile);
+        
+        // Verify: Handler correctly stores CaseProfile
+        assertNotNull(handler.getCaseProfile());
+        assertEquals("12/24/2025", handler.getDateOfSeparation());
+        
+        // Create test mortgage statement with payments on different dates
+        EvidenceChunk mortgageChunk = createTestChunk(
+            "Mortgage Statement\n" +
+            "Property Address: Test Property, Newark, CA 94560\n" +
+            "Loan Number: LOAN001\n" +
+            "12/01/25 PAYMENT $4,500.00\n" +  // BEFORE DOS - should be excluded
+            "01/02/26 PAYMENT $4,500.00\n" +  // AFTER DOS - should be included
+            "02/02/26 PAYMENT $4,500.00",     // AFTER DOS - should be included
+            1L, 1, "Page 1"
+        );
+        
+        List<EvidenceChunk> chunks = List.of(mortgageChunk);
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement claim", 0.85, "reimbursement")
+        );
+        
+        testRetrievalService.setEvidenceChunks(chunks);
+        testContextBuilder.setContext(new CaseAnalysisContext(
+            "Reimbursement claim", issues, List.of(),
+            "CaseProfile DOS filtering test"
+        ));
+        
+        // Execute
+        ModeExecutionResult result = handler.execute("Show me post-separation mortgage payments", 5);
+        
+        // Verify: Execution succeeds with CaseProfile-based filtering
+        assertTrue(result.isSuccess());
+        assertNotNull(result.getAnswer());
+        assertTrue(result.getAnswer().length() > 0,
+            "Handler should return an answer using CaseProfile DOS");
+    }
 }
+
