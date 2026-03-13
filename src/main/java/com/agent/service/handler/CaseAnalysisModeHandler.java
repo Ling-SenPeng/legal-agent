@@ -1009,7 +1009,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                         }
                         
                         // Filter the rule to only reference final authorities
-                        String filteredRule = filterRuleToFinalAuthorities(originalRule, finalAuthorities);
+                        String filteredRule = filterRuleToFinalAuthorities(originalRule, finalAuthorities, primaryIssue.getType());
                         ruleText.append(filteredRule);
                         break;
                     }
@@ -1046,9 +1046,10 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * 
      * @param originalRule Original rule text from authority summary
      * @param finalAuthorities Final authorities to keep references to
+     * @param issueType Issue type for generating concrete fallback rules
      * @return Filtered rule text, or regenerated rule if stale citations found
      */
-    private String filterRuleToFinalAuthorities(String originalRule, List<LegalAuthority> finalAuthorities) {
+    private String filterRuleToFinalAuthorities(String originalRule, List<LegalAuthority> finalAuthorities, LegalIssueType issueType) {
         if (finalAuthorities.isEmpty() || originalRule == null) {
             return originalRule;
         }
@@ -1115,7 +1116,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             if (logger.isDebugEnabled()) {
                 logger.debug("[CASE_ANALYSIS_RULE_FILTER] Decision: REGENERATE - Rule contains stale citations " + staleCitations);
             }
-            return createRuleFromFinalAuthorities(finalAuthorities);
+            return createRuleFromFinalAuthorities(finalAuthorities, issueType);
         }
         
         // If rule mentions at least one final authority (by citation OR by name) and has no stale citations, reuse it
@@ -1138,7 +1139,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             if (logger.isDebugEnabled()) {
                 logger.debug("[CASE_ANALYSIS_RULE_FILTER] Decision: REGENERATE - Rule mentions no final authorities.");
             }
-            return createRuleFromFinalAuthorities(finalAuthorities);
+            return createRuleFromFinalAuthorities(finalAuthorities, issueType);
         }
     }
     
@@ -1280,19 +1281,21 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     }
 
     /**
-     * Create a simple rule text from the final authorities.
+     * Create a concrete rule text from the final authorities.
      * Used when the original rule doesn't match the final rendered authorities.
+     * Generates deterministic, citation-specific rules based on issue type and authority names.
      * 
-     * @param finalAuthorities Final authorities
-     * @return Generated rule text
+     * @param finalAuthorities Final authorities to base rule on
+     * @param issueType Issue type for context-specific rule generation
+     * @return Generated concrete rule text
      */
-    private String createRuleFromFinalAuthorities(List<LegalAuthority> finalAuthorities) {
+    private String createRuleFromFinalAuthorities(List<LegalAuthority> finalAuthorities, LegalIssueType issueType) {
         if (finalAuthorities.isEmpty()) {
             return "No specific legal rule available.\n";
         }
         
         if (logger.isDebugEnabled()) {
-            StringBuilder fallbackLog = new StringBuilder("\n[CASE_ANALYSIS_RULE_FALLBACK] Creating generic fallback rule from final authorities:\n");
+            StringBuilder fallbackLog = new StringBuilder("\n[CASE_ANALYSIS_RULE_FALLBACK] Creating concrete fallback rule from final authorities:\n");
             for (LegalAuthority auth : finalAuthorities) {
                 fallbackLog.append(String.format("  - %s | %s | %s\n",
                     auth.getAuthorityId(),
@@ -1303,28 +1306,165 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             logger.debug(fallbackLog.toString());
         }
         
-        // Just create a generic rule statement without repeating authority names
-        // Authority names will be shown in the RELEVANT AUTHORITIES section
-        StringBuilder rule = new StringBuilder();
+        // Build a concrete rule based on issue type and recognized authority names
+        String rule = generateConcreteRule(finalAuthorities, issueType);
         
-        // Check authority types to create appropriate rule text
-        boolean hasStatute = finalAuthorities.stream().anyMatch(a -> a.getAuthorityType() == AuthorityType.STATUTE);
-        boolean hasCaseLaw = finalAuthorities.stream().anyMatch(a -> a.getAuthorityType() == AuthorityType.CASE_LAW);
-        
-        rule.append("Legal principles from relevant ");
-        
-        if (hasStatute && hasCaseLaw) {
-            rule.append("statutes and case law ");
-        } else if (hasStatute) {
-            rule.append("statutory law ");
-        } else if (hasCaseLaw) {
-            rule.append("case law ");
-        } else {
-            rule.append("authorities ");
+        if (logger.isDebugEnabled()) {
+            logger.debug("[CASE_ANALYSIS_RULE_FALLBACK] Generated rule: " + rule);
         }
         
-        rule.append("apply to this issue. Consult the cited authorities for detailed rules and applicable requirements.\n");
+        return rule + "\n";
+    }
+    
+    /**
+     * Generate a concrete rule text based on issue type and authority names.
+     * Uses templates for recognized authorities and falls back to citation-aware generic.
+     * 
+     * @param finalAuthorities Final authorities
+     * @param issueType Issue type for rule template selection
+     * @return Concrete rule text
+     */
+    private String generateConcreteRule(List<LegalAuthority> finalAuthorities, LegalIssueType issueType) {
+        if (finalAuthorities.isEmpty()) {
+            return "Legal principles apply to this issue.";
+        }
         
+        // Collect authority titles and citations for rule generation
+        List<String> caseAuthorities = new ArrayList<>();
+        List<String> statuteAuthorities = new ArrayList<>();
+        
+        for (LegalAuthority auth : finalAuthorities) {
+            String titleWithCitation = auth.getTitle() + " (" + auth.getCitation() + ")";
+            if (auth.getAuthorityType() == AuthorityType.CASE_LAW) {
+                caseAuthorities.add(titleWithCitation);
+            } else if (auth.getAuthorityType() == AuthorityType.STATUTE) {
+                statuteAuthorities.add(titleWithCitation);
+            }
+        }
+        
+        // Generate issue-specific rule templates
+        switch (issueType) {
+            case REIMBURSEMENT:
+                return generateReimbursementRule(caseAuthorities, statuteAuthorities);
+            case PROPERTY_CHARACTERIZATION:
+                return generatePropertyCharacterizationRule(caseAuthorities, statuteAuthorities);
+            case SUPPORT:
+                return generateSpousalSupportRule(caseAuthorities, statuteAuthorities);
+            case CUSTODY:
+                return generateCustodyRule(caseAuthorities, statuteAuthorities);
+            default:
+                return generateGenericCitationAwareRule(finalAuthorities);
+        }
+    }
+    
+    /**
+     * Generate concrete rule for REIMBURSEMENT issues.
+     */
+    private String generateReimbursementRule(List<String> caseAuthorities, List<String> statuteAuthorities) {
+        StringBuilder rule = new StringBuilder();
+        
+        // Check for recognized authority names
+        boolean hasEpstein = caseAuthorities.stream().anyMatch(c -> c.toLowerCase().contains("epstein"));
+        boolean hasWatts = caseAuthorities.stream().anyMatch(c -> c.toLowerCase().contains("watts"));
+        boolean hasStatute = !statuteAuthorities.isEmpty();
+        
+        if (hasEpstein && hasStatute) {
+            rule.append("A spouse who uses separate funds after separation to pay community obligations may seek reimbursement. ");
+            rule.append("Under the Epstein principles, reimbursement is available subject to applicable California family law requirements. ");
+            rule.append("See ").append(String.join(", ", statuteAuthorities)).append(" for statutory requirements.");
+        } else if (hasEpstein) {
+            rule.append("Reimbursement rights are governed by the Epstein principles established in case law. ");
+            rule.append("A spouse who pays community obligations with separate property may be entitled to reimbursement.");
+        } else if (hasStatute) {
+            rule.append("Reimbursement of family support obligations is governed by statute. ");
+            rule.append("An obligation to reimburse a spouse for payments made to community property obligations is subject to statutory requirements. ");
+            rule.append("See ").append(String.join(", ", statuteAuthorities)).append(" for applicable rules.");
+        } else {
+            rule.append("Reimbursement rights may be available to a spouse who uses separate funds to pay community obligations, ");
+            rule.append("subject to established legal principles and statutory requirements.");
+        }
+        
+        return rule.toString();
+    }
+    
+    /**
+     * Generate concrete rule for PROPERTY_CHARACTERIZATION issues.
+     */
+    private String generatePropertyCharacterizationRule(List<String> caseAuthorities, List<String> statuteAuthorities) {
+        StringBuilder rule = new StringBuilder();
+        
+        boolean hasStatute = !statuteAuthorities.isEmpty();
+        
+        if (hasStatute) {
+            rule.append("Property characterization determines whether assets are community property or separate property. ");
+            rule.append("California law establishes rules for characterizing property acquired during marriage based on the source of funds. ");
+            rule.append("See ").append(String.join(", ", statuteAuthorities)).append(" for statutory definitions and rules.");
+        } else if (!caseAuthorities.isEmpty()) {
+            rule.append("Property characterization is determined by the source of funds used to acquire the property. ");
+            rule.append("Case law establishes principles for determining whether property is community or separate based on payment timing and source.");
+        } else {
+            rule.append("Property must be properly characterized as community or separate property according to established legal principles.");
+        }
+        
+        return rule.toString();
+    }
+    
+    /**
+     * Generate concrete rule for SPOUSAL_SUPPORT issues.
+     */
+    private String generateSpousalSupportRule(List<String> caseAuthorities, List<String> statuteAuthorities) {
+        StringBuilder rule = new StringBuilder();
+        
+        if (!statuteAuthorities.isEmpty()) {
+            rule.append("Spousal support obligations are determined according to statutory guidelines. ");
+            rule.append("The court shall order one spouse to pay reasonable support to the other as provided by statute. ");
+            rule.append("See ").append(String.join(", ", statuteAuthorities)).append(" for calculation and factors.");
+        } else {
+            rule.append("Spousal support is determined based on established legal factors and statutory provisions. ");
+            rule.append("The amount and duration of support depend on the financial circumstances and needs of the parties.");
+        }
+        
+        return rule.toString();
+    }
+    
+    /**
+     * Generate concrete rule for CUSTODY issues.
+     */
+    private String generateCustodyRule(List<String> caseAuthorities, List<String> statuteAuthorities) {
+        StringBuilder rule = new StringBuilder();
+        
+        if (!statuteAuthorities.isEmpty()) {
+            rule.append("Child custody determinations are made in the best interests of the child. ");
+            rule.append("The court shall consider statutory factors when determining custody arrangements. ");
+            rule.append("See ").append(String.join(", ", statuteAuthorities)).append(" for custody factors and procedures.");
+        } else {
+            rule.append("Custody decisions are made based on the best interests of the child, ");
+            rule.append("considering factors such as parental relationship, child's needs, and family stability.");
+        }
+        
+        return rule.toString();
+    }
+    
+    /**
+     * Generate a generic but citation-aware rule for unrecognized issue types.
+     */
+    private String generateGenericCitationAwareRule(List<LegalAuthority> finalAuthorities) {
+        StringBuilder rule = new StringBuilder();
+        
+        rule.append("Legal principles from relevant authorities apply to this issue. ");
+        rule.append("See ");
+        
+        List<String> citations = finalAuthorities.stream()
+            .map(auth -> auth.getTitle() + " (" + auth.getCitation() + ")")
+            .toList();
+        
+        for (int i = 0; i < citations.size(); i++) {
+            if (i > 0 && i < citations.size() - 1) rule.append(", ");
+            else if (i > 0) rule.append(" and ");
+            rule.append(citations.get(i));
+        }
+        
+        rule.append(" for applicable legal principles.");
         return rule.toString();
     }
 

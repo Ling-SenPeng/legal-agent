@@ -435,17 +435,19 @@ class CaseAnalysisModeHandlerTest {
         String answer = result.getAnswer();
         assertNotNull(answer, "Answer should not be null");
         
-        // Count occurrences of each authority - should appear exactly once
+        // Count occurrences of each authority - should appear in rule/authorities but not excessively duplicated
         int epsteinCount = countOccurrences(answer, "Epstein");
         int gudelJCount = countOccurrences(answer, "Gudelj");
         int husKeyCount = countOccurrences(answer, "Huskey");
         
-        assertTrue(epsteinCount <= 1,
-            "Epstein should appear at most once in output, but appeared " + epsteinCount + " times");
-        assertTrue(gudelJCount <= 1,
-            "Gudelj should appear at most once in output, but appeared " + gudelJCount + " times");
-        assertTrue(husKeyCount <= 1,
-            "Huskey should appear at most once in output, but appeared " + husKeyCount + " times");
+        // With concrete rule generation, authority names may appear in both rule text and authorities list
+        // Allow up to 2 occurrences (rule + authorities section)
+        assertTrue(epsteinCount <= 2,
+            "Epstein should appear at most twice (once in rule, once in authorities), but appeared " + epsteinCount + " times");
+        assertTrue(gudelJCount <= 2,
+            "Gudelj should appear at most twice, but appeared " + gudelJCount + " times");
+        assertTrue(husKeyCount <= 2,
+            "Huskey should appear at most twice, but appeared " + husKeyCount + " times");
         
         // Verify at least one authority is shown
         assertTrue(epsteinCount + gudelJCount + husKeyCount >= 1,
@@ -1324,6 +1326,141 @@ class CaseAnalysisModeHandlerTest {
         // Should be regenerated
         assertNotNull(answer, "Answer should not be null");
         assertTrue(answer.contains("LEGAL RULE"), "Output should contain LEGAL RULE section");
+    }
+
+    @Test
+    void testFallbackRuleGenerationReimbursement() {
+        // Test that fallback rule generation for REIMBURSEMENT creates concrete rule, not generic placeholder
+        
+        String query = "reimbursement claim";
+        
+        LegalAuthority epstein = new LegalAuthority(
+            "auth_epstein", "Marriage of Epstein", "191 Cal.App.3d 592",
+            AuthorityType.CASE_LAW, "court_case", "Reimbursement principles", 0.90
+        );
+        
+        LegalAuthority familyCode = new LegalAuthority(
+            "auth_fam", "California Family Code § 750", "Cal. Fam. Code § 750",
+            AuthorityType.STATUTE, "statute", "Reimbursement statute", 0.85
+        );
+        
+        // Original rule with stale citation that triggers regeneration
+        String staleRule = "Reimbursement under Epstein (191 Cal.App.3d 592) and Moore (28 Cal.4th 366) " +
+                          "is subject to Cal. Fam. Code § 750.";
+        
+        AuthoritySummary summary = new AuthoritySummary(
+            LegalIssueType.REIMBURSEMENT, 1, staleRule,
+            List.of(epstein, familyCode)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query,
+            List.of(new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.9, "reimbursement")),
+            List.of(new CaseFact("Paid community obligation with separate funds", true, "source", LegalIssueType.REIMBURSEMENT)),
+            List.of(),
+            "Reimbursement analysis",
+            List.of(summary)
+        );
+        
+        EvidenceChunk chunk = createTestChunk("Fact evidence", 1L, 1, "Page 1");
+        testRetrievalService.setEvidenceChunks(List.of(chunk));
+        testContextBuilder.setContext(context);
+        
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Verify execution succeeds
+        assertTrue(result.isSuccess(), "Execution should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer, "Answer should not be null");
+        
+        // Extract LEGAL RULE section
+        int ruleStart = answer.indexOf("LEGAL RULE");
+        int ruleEnd = answer.indexOf("RELEVANT AUTHORITIES");
+        assertTrue(ruleStart >= 0, "LEGAL RULE section must exist");
+        
+        String ruleSection = answer.substring(ruleStart, ruleEnd);
+        
+        // Verify: Rule is CONCRETE, not the generic placeholder
+        assertFalse(ruleSection.contains("Legal principles from relevant"),
+            "Rule should NOT be generic placeholder - should be regenerated with concrete content");
+        
+        // Verify: Regenerated rule mentions only final authorities
+        assertFalse(ruleSection.contains("28 Cal.4th 366"),
+            "Rule should NOT contain stale Moore citation");
+        assertFalse(ruleSection.contains("Moore"),
+            "Rule should NOT mention Moore (stale authority)");
+        
+        // Verify: Regenerated rule is concrete and specific to reimbursement
+        assertTrue(
+            ruleSection.toLowerCase().contains("spouse") ||
+            ruleSection.toLowerCase().contains("funds") ||
+            ruleSection.toLowerCase().contains("reimbursement") ||
+            ruleSection.toLowerCase().contains("epstein"),
+            "Rule should be concrete with reimbursement-specific language or authority names"
+        );
+    }
+
+    @Test
+    void testFallbackRulePropertyCharacterization() {
+        // Test fallback rule generation for PROPERTY_CHARACTERIZATION produces concrete rule
+        
+        String query = "property is community or separate";
+        
+        LegalAuthority codeAuth = new LegalAuthority(
+            "auth_prop", "California family Code property division",
+            "Cal. Fam. Code § 750",
+            AuthorityType.STATUTE, "statute", "Property characterization", 0.88
+        );
+        
+        // Stale rule that triggers regeneration
+        String staleRule = "Property purchased with community funds is generally community property per " +
+                          "Smith v. Jones (100 Cal.2d 100) and Cal. Fam. Code § 750 and § 1100.";
+        
+        AuthoritySummary summary = new AuthoritySummary(
+            LegalIssueType.PROPERTY_CHARACTERIZATION, 1, staleRule,
+            List.of(codeAuth)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query,
+            List.of(new CaseIssue(LegalIssueType.PROPERTY_CHARACTERIZATION, "Property", 0.9, "property")),
+            List.of(new CaseFact("Property purchased during marriage", true, "source", LegalIssueType.PROPERTY_CHARACTERIZATION)),
+            List.of(),
+            "Property analysis",
+            List.of(summary)
+        );
+        
+        EvidenceChunk chunk = createTestChunk("Property facts", 1L, 1, "Page 1");
+        testRetrievalService.setEvidenceChunks(List.of(chunk));
+        testContextBuilder.setContext(context);
+        
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        assertTrue(result.isSuccess(), "Execution should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer, "Answer should not be null");
+        
+        // Extract LEGAL RULE section
+        int ruleStart = answer.indexOf("LEGAL RULE");
+        int ruleEnd = answer.indexOf("RELEVANT AUTHORITIES");
+        assertTrue(ruleStart >= 0, "LEGAL RULE section must exist");
+        
+        String ruleSection = answer.substring(ruleStart, ruleEnd);
+        
+        // Verify: Rule is concrete for property characterization
+        assertFalse(ruleSection.contains("100 Cal.2d 100"),
+            "Should not contain stale Smith citation");
+        assertFalse(ruleSection.contains("§ 1100"),
+            "Should not contain stale § 1100 citation");
+        
+        // Verify: Rule is specific to property characterization topic
+        assertTrue(
+            ruleSection.toLowerCase().contains("property") ||
+            ruleSection.toLowerCase().contains("community") ||
+            ruleSection.toLowerCase().contains("separate") ||
+            ruleSection.toLowerCase().contains("characteriz"),
+            "Rule should have property-specific language"
+        );
     }
 
     // ==================== HELPER METHODS ====================
