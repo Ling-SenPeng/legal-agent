@@ -63,6 +63,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private final AuthoritySummarizer authoritySummarizer;
     private final FactClassifier factClassifier;
     private final PaymentRecordExtractor paymentRecordExtractor;
+    
+    // ThreadLocal to store evidence chunks during execution for access in nested methods
+    private final ThreadLocal<List<EvidenceChunk>> currentEvidenceChunks = new ThreadLocal<>();
 
     public CaseAnalysisModeHandler(
         RetrievalService retrievalService,
@@ -147,6 +150,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             logger.debug("[CASE_ANALYSIS] Step 4: Retrieving evidence for {} queries", retrievalQueries.size());
             List<EvidenceChunk> mergedEvidenceChunks = retrieveAndMergeEvidence(retrievalQueries, topK);
             
+            // Store evidence chunks for access in nested methods (e.g., for PaymentRecord extraction)
+            currentEvidenceChunks.set(mergedEvidenceChunks);
+            
             if (mergedEvidenceChunks.isEmpty()) {
                 logger.warn("[CASE_ANALYSIS] No evidence found across all retrieval queries");
                 return new ModeExecutionResult(
@@ -223,6 +229,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                 TaskMode.CASE_ANALYSIS,
                 "Error performing case analysis: " + e.getMessage()
             );
+        } finally {
+            // Clean up ThreadLocal to prevent memory leaks
+            currentEvidenceChunks.remove();
         }
     }
 
@@ -1921,6 +1930,97 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     }
     
     /**
+     * Extract PaymentRecords from evidence chunks for REIMBURSEMENT issues.
+     * Filters for mortgage/payment-related chunks and extracts structured payment data.
+     * 
+     * @return List of PaymentRecords converted to CaseFacts for rendering
+     */
+    private List<CaseFact> extractPaymentRecordsAsFacts() {
+        List<CaseFact> paymentFacts = new ArrayList<>();
+        
+        List<EvidenceChunk> chunks = currentEvidenceChunks.get();
+        if (chunks == null || chunks.isEmpty()) {
+            return paymentFacts;
+        }
+        
+        // Keywords that indicate mortgage/payment statements
+        String[] paymentKeywords = {
+            "mortgage", "payment", "loan", "principal", "interest",
+            "monthly", "due date", "amortization", "statement"
+        };
+        
+        for (EvidenceChunk chunk : chunks) {
+            String content = chunk.text().toLowerCase();
+            String source = String.format("Doc %d, Chunk %d", chunk.docId(), chunk.chunkId());
+            
+            // Check if this chunk contains payment-related content
+            boolean isPaymentChunk = false;
+            for (String keyword : paymentKeywords) {
+                if (content.contains(keyword)) {
+                    isPaymentChunk = true;
+                    break;
+                }
+            }
+            
+            if (!isPaymentChunk) {
+                continue;
+            }
+            
+            // Extract PaymentRecords from this chunk
+            List<PaymentRecord> records = paymentRecordExtractor.extract(chunk.text());
+            
+            // Convert each PaymentRecord to a CaseFact
+            for (PaymentRecord record : records) {
+                String factDescription = formatPaymentRecordAsFactDescription(record);
+                if (factDescription != null) {
+                    CaseFact fact = new CaseFact(
+                        factDescription,
+                        FactPolarity.SUPPORTING,
+                        source,
+                        LegalIssueType.REIMBURSEMENT
+                    );
+                    paymentFacts.add(fact);
+                    
+                    logger.debug("[PAYMENT_RECORD_EXTRACTION] Extracted payment fact: {} | source={}",
+                        factDescription, source);
+                }
+            }
+        }
+        
+        return paymentFacts;
+    }
+    
+    /**
+     * Format a PaymentRecord as a human-readable fact description.
+     * Example: "Mortgage payment of $4,679.23 on 01/02/26 for Newark property (Loan #2109013512)"
+     */
+    private String formatPaymentRecordAsFactDescription(PaymentRecord record) {
+        if (record.getAmount() == null) {
+            return null;
+        }
+        
+        StringBuilder fact = new StringBuilder("Mortgage payment of $");
+        fact.append(String.format("%.2f", record.getAmount()));
+        
+        // Add date if available
+        if (record.getPaymentDate() != null && !record.getPaymentDate().isEmpty()) {
+            fact.append(" on ").append(record.getPaymentDate());
+        }
+        
+        // Add property if available
+        if (record.getPropertyName() != null && !record.getPropertyName().isEmpty()) {
+            fact.append(" for ").append(record.getPropertyName()).append(" property");
+        }
+        
+        // Add loan number if available
+        if (record.getLoanNumber() != null && !record.getLoanNumber().isEmpty()) {
+            fact.append(" (Loan #").append(record.getLoanNumber()).append(")");
+        }
+        
+        return fact.toString();
+    }
+    
+    /**
      * Find facts that support a given rule element.
      * Matches facts based on keywords in the element description.
      * Applies strict quality filtering BEFORE keyword matching.
@@ -1986,6 +2086,19 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         if (logger.isDebugEnabled()) {
             logger.debug("[STRICT_FILTER] Keyword matching: {} of {} accepted facts matched element keywords with selective criteria",
                 supportingFacts.size(), acceptedByStrictFilter.size());
+        }
+        
+        // For REIMBURSEMENT issues, first element: extract and add PaymentRecords
+        // First element: "Post-separation payment was made to satisfy a community obligation"
+        if (issueType == LegalIssueType.REIMBURSEMENT && 
+            element.toLowerCase().contains("post-separation") && 
+            element.toLowerCase().contains("payment")) {
+            
+            List<CaseFact> paymentFacts = extractPaymentRecordsAsFacts();
+            if (!paymentFacts.isEmpty()) {
+                supportingFacts.addAll(paymentFacts);
+                logger.info("[PAYMENT_RECORD_EXTRACTION] Added {} payment facts to supporting facts", paymentFacts.size());
+            }
         }
         
         // Keep at most 2 high-quality supporting facts per rule element
