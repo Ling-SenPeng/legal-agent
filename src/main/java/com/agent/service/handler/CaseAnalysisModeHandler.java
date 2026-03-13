@@ -1757,14 +1757,31 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             return;
         }
         
+        // Log entire raw fact pool for this section
+        if (logger.isDebugEnabled() && !context.getRelevantFacts().isEmpty()) {
+            logFactPoolPreview("[FACT_FILTER_PIPELINE_START]", context.getRelevantFacts());
+        }
+        
         // For each rule element, show supporting facts, missing facts, and assessment
         for (String element : ruleElements) {
             answer.append("Element: ").append(element).append("\n");
             
-            // Find supporting facts for this element
+            // Find supporting facts for this element (with detailed pipeline logging)
             List<CaseFact> allSupportingFacts = findSupportingFactsForElement(element, context, primaryIssue.getType());
+            
+            // Log facts after strict filter + keyword matching but before rendering filter
+            if (logger.isDebugEnabled()) {
+                logRuleElementPipeline(element, context, allSupportingFacts);
+            }
+            
             // Filter out low-quality snippets before rendering
-            List<CaseFact> supportingFacts = filterHighQualityFacts(allSupportingFacts);
+            List<CaseFact> supportingFacts = filterHighQualityFactsWithLogging(allSupportingFacts);
+            
+            // Log final rendered facts
+            if (logger.isDebugEnabled() && !supportingFacts.isEmpty()) {
+                logFinalRenderedFacts(element, supportingFacts);
+            }
+            
             if (!supportingFacts.isEmpty()) {
                 answer.append("Supporting Facts:\n");
                 supportingFacts.stream()
@@ -1788,6 +1805,66 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             String assessment = assessRuleElement(element, supportingFacts, missingFacts);
             answer.append("Assessment: ").append(assessment).append("\n\n");
         }
+    }
+    
+    /**
+     * Log preview of entire fact pool at start of APPLICATION TO RULE section.
+     * Shows count of facts by favorability/polarity.
+     */
+    private void logFactPoolPreview(String stage, List<CaseFact> allFacts) {
+        if (!logger.isDebugEnabled()) {
+            return;
+        }
+        
+        long favorableCount = allFacts.stream().filter(CaseFact::isFavorable).count();
+        long unfavorableCount = allFacts.size() - favorableCount;
+        
+        logger.debug("{} Fact pool: {} total | {} favorable | {} unfavorable",
+            stage, allFacts.size(), favorableCount, unfavorableCount);
+    }
+    
+    /**
+     * Log detailed pipeline for a specific rule element.
+     * Shows which facts passed strict filter, matched keywords, etc.
+     */
+    private void logRuleElementPipeline(String element, CaseAnalysisContext context, List<CaseFact> assignedFacts) {
+        if (!logger.isDebugEnabled()) {
+            return;
+        }
+        
+        StringBuilder pipelineLog = new StringBuilder();
+        pipelineLog.append("\n[FACT_FILTER_PIPELINE] Element: \"").append(element).append("\"\n");
+        pipelineLog.append("  Assigned through strict filter + keyword matching: ").append(assignedFacts.size()).append(" facts\n");
+        
+        for (CaseFact fact : assignedFacts) {
+            String truncated = fact.getDescription().length() > 70 ? 
+                fact.getDescription().substring(0, 70) + "..." : fact.getDescription();
+            pipelineLog.append("    - ").append(truncated).append("\n");
+        }
+        
+        logger.debug(pipelineLog.toString());
+    }
+    
+    /**
+     * Log final rendered facts after all filtering stages.
+     */
+    private void logFinalRenderedFacts(String element, List<CaseFact> renderedFacts) {
+        if (!logger.isDebugEnabled() || renderedFacts.isEmpty()) {
+            return;
+        }
+        
+        StringBuilder finalLog = new StringBuilder();
+        finalLog.append("[FACT_FILTER_PIPELINE] Final rendered for \"").append(
+            element.substring(0, Math.min(50, element.length()))
+        ).append("\": ").append(renderedFacts.size()).append(" facts\n");
+        
+        for (CaseFact fact : renderedFacts) {
+            String truncated = fact.getDescription().length() > 60 ? 
+                fact.getDescription().substring(0, 60) + "..." : fact.getDescription();
+            finalLog.append("  ✓ RENDERED: ").append(truncated).append("\n");
+        }
+        
+        logger.debug(finalLog.toString());
     }
     
     /**
@@ -1837,6 +1914,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     /**
      * Find facts that support a given rule element.
      * Matches facts based on keywords in the element description.
+     * Applies strict quality filtering BEFORE keyword matching.
      * 
      * @param element Rule element description
      * @param context Case analysis context
@@ -1847,18 +1925,51 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         String element, CaseAnalysisContext context, LegalIssueType issueType
     ) {
         List<CaseFact> supportingFacts = new ArrayList<>();
+        List<CaseFact> rejectedByStrictFilter = new ArrayList<>();
+        List<CaseFact> acceptedByStrictFilter = new ArrayList<>();
         
-        // Get favorable facts and apply strict quality filtering BEFORE rule-element assignment
-        List<CaseFact> favorableFacts = context.getRelevantFacts().stream()
+        // Get all favorable facts for this issue type
+        List<CaseFact> allFavorableFacts = context.getRelevantFacts().stream()
             .filter(CaseFact::isFavorable)
             .filter(f -> f.getRelevantIssue() == issueType)
-            .filter(this::isStrictlyHighQualityFact)
             .toList();
         
-        // Simple keyword matching to map facts to elements
+        if (logger.isDebugEnabled()) {
+            logger.debug("[STRICT_FILTER] Processing {} favorable facts for element: \"{}\"",
+                allFavorableFacts.size(), truncateForLogging(element));
+        }
+        
+        // Apply strict quality filtering BEFORE rule-element assignment
+        for (CaseFact fact : allFavorableFacts) {
+            if (isStrictlyHighQualityFact(fact)) {
+                acceptedByStrictFilter.add(fact);
+            } else {
+                rejectedByStrictFilter.add(fact);
+            }
+        }
+        
+        // Log which facts passed strict filter
+        if (logger.isDebugEnabled() && !acceptedByStrictFilter.isEmpty()) {
+            StringBuilder acceptedLog = new StringBuilder("[STRICT_FILTER] Accepted facts:\n");
+            for (CaseFact fact : acceptedByStrictFilter) {
+                acceptedLog.append("  ✓ ").append(truncateForLogging(fact.getDescription())).append("\n");
+            }
+            logger.debug(acceptedLog.toString());
+        }
+        
+        // Log which facts were rejected
+        if (logger.isDebugEnabled() && !rejectedByStrictFilter.isEmpty()) {
+            StringBuilder rejectedLog = new StringBuilder("[STRICT_FILTER] Rejected facts:\n");
+            for (CaseFact fact : rejectedByStrictFilter) {
+                rejectedLog.append("  ✗ ").append(truncateForLogging(fact.getDescription())).append("\n");
+            }
+            logger.debug(rejectedLog.toString());
+        }
+        
+        // Now apply keyword matching on the filtered (high-quality) facts
         String elementLower = element.toLowerCase();
         
-        for (CaseFact fact : favorableFacts) {
+        for (CaseFact fact : acceptedByStrictFilter) {
             String factLower = fact.getDescription().toLowerCase();
             
             // Check for keyword overlap
@@ -1872,6 +1983,12 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             else if (elementLower.contains("need") && factLower.contains("need")) supportingFacts.add(fact);
             else if (elementLower.contains("ability") && (factLower.contains("income") || factLower.contains("asset"))) supportingFacts.add(fact);
             else if (elementLower.contains("custody") && factLower.contains("custody")) supportingFacts.add(fact);
+        }
+        
+        // Log keyword matching results
+        if (logger.isDebugEnabled()) {
+            logger.debug("[STRICT_FILTER] Keyword matching: {} of {} accepted facts matched element keywords",
+                supportingFacts.size(), acceptedByStrictFilter.size());
         }
         
         // Keep at most 2 high-quality supporting facts per rule element
@@ -2116,6 +2233,109 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * @param facts List of case facts to filter
      * @return Filtered list of high-quality facts suitable for rendering
      */
+    /**
+     * Filter high-quality facts with detailed logging.
+     * Reports which facts are accepted/rejected at rendering stage and why.
+     * 
+     * @param facts Facts to filter
+     * @return Filtered high-quality facts
+     */
+    private List<CaseFact> filterHighQualityFactsWithLogging(List<CaseFact> facts) {
+        if (facts == null || facts.isEmpty()) {
+            return facts;
+        }
+        
+        List<CaseFact> result = new ArrayList<>();
+        List<String> rejectedFacts = new ArrayList<>();
+        
+        for (CaseFact fact : facts) {
+            String desc = fact.getDescription();
+            if (desc == null || desc.isEmpty()) {
+                if (logger.isDebugEnabled()) {
+                    rejectedFacts.add("(null/empty) | reason=null_or_empty");
+                }
+                continue;
+            }
+            
+            // Filter 1: Length check - too short is likely noise
+            if (desc.length() < 15) {
+                if (desc.contains("$") || desc.toLowerCase().contains("paid") || 
+                    desc.toLowerCase().contains("property")) {
+                    result.add(fact);
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("[RENDERING_FILTER] ACCEPTED | {} | reason=short_with_keywords",
+                            truncateForLogging(desc));
+                    }
+                } else {
+                    if (logger.isDebugEnabled()) {
+                        rejectedFacts.add(truncateForLogging(desc) + " | reason=too_short");
+                    }
+                }
+                continue;
+            }
+            
+            // Filter 2: Numeric-only or near-numeric fragments
+            String descNoWhitespace = desc.replaceAll("\\s+", "");
+            if (descNoWhitespace.matches("^[0-9,.$]+$")) {
+                if (logger.isDebugEnabled()) {
+                    rejectedFacts.add(truncateForLogging(desc) + " | reason=numeric_only");
+                }
+                continue;
+            }
+            
+            // Filter 3: OCR garbage patterns (excessive special chars, broken text)
+            long specialCharCount = desc.chars()
+                .filter(c -> "!@#%^&*~`|<>?/".indexOf(c) >= 0)
+                .count();
+            if (specialCharCount > desc.length() * 0.2) {
+                if (logger.isDebugEnabled()) {
+                    rejectedFacts.add(truncateForLogging(desc) + " | reason=ocr_garbage");
+                }
+                continue;
+            }
+            
+            // Filter 4: Boilerplate form fragments
+            String lowerDesc = desc.toLowerCase();
+            if ((lowerDesc.contains("real and personal") && desc.matches(".*real and personal\\s*\\$*.*")) ||
+                lowerDesc.matches(".*\\b(and|or)\\s*\\$\\s*") ||
+                (lowerDesc.matches("^[A-Z]\\. .*") && !lowerDesc.contains("payment") && 
+                 !lowerDesc.contains("mortgage"))) {
+                if (logger.isDebugEnabled()) {
+                    rejectedFacts.add(truncateForLogging(desc) + " | reason=boilerplate_form_text");
+                }
+                continue;
+            }
+            
+            // Filter 5: Incomplete table rows (unless meaningful payment info)
+            if ((lowerDesc.matches("^\\|.*\\|?$") || (desc.contains(":") && desc.length() < 30)) &&
+                !lowerDesc.contains("payment") && !lowerDesc.contains("mortgage") && 
+                !lowerDesc.contains("paid")) {
+                if (logger.isDebugEnabled()) {
+                    rejectedFacts.add(truncateForLogging(desc) + " | reason=table_fragment");
+                }
+                continue;
+            }
+            
+            // Passes all filters - high quality
+            result.add(fact);
+            if (logger.isDebugEnabled()) {
+                logger.debug("[RENDERING_FILTER] ACCEPTED | {} | reason=passes_all_filters",
+                    truncateForLogging(desc));
+            }
+        }
+        
+        // Log rejected facts as a group
+        if (logger.isDebugEnabled() && !rejectedFacts.isEmpty()) {
+            StringBuilder rejectedLog = new StringBuilder("[RENDERING_FILTER] Rejected at rendering stage:\n");
+            for (String rejected : rejectedFacts) {
+                rejectedLog.append("  ✗ ").append(rejected).append("\n");
+            }
+            logger.debug(rejectedLog.toString());
+        }
+        
+        return result;
+    }
+    
     private List<CaseFact> filterHighQualityFacts(List<CaseFact> facts) {
         if (facts == null || facts.isEmpty()) {
             return facts;
@@ -2172,5 +2392,15 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                 return true;  // Passes all filters - high quality
             })
             .collect(java.util.stream.Collectors.toList());
+    }
+    
+    /**
+     * Helper to truncate text for logging (max 70 chars).
+     */
+    private String truncateForLogging(String text) {
+        if (text == null) {
+            return "(null)";
+        }
+        return text.length() > 70 ? text.substring(0, 70) + "..." : text;
     }
 }

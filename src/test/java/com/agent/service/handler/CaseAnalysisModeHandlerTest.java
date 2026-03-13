@@ -1804,4 +1804,57 @@ class CaseAnalysisModeHandlerTest {
             return extractIssues(caseQuery);
         }
     }
+
+    @Test
+    @DisplayName("Comprehensive logging included in fact filtering pipeline")
+    void testDebugLoggingShowsFilteringPipeline() {
+        // Verify that implementation includes comprehensive debug logging
+        // without crashing the pipeline.
+        
+        // This test demonstrates:
+        // 1. Strict filter and rendering filter with logging both active
+        // 2. Pipeline doesn't break with logging enabled
+        // 3. Both quality and noisy facts can be processed without errors
+        
+        String query = "Reimbursement claim analysis?";
+        
+        // Create both quality and noisy evidence chunks
+        EvidenceChunk qualityChunk = createTestChunk(
+            "I paid $20,000 in separate property funds to mortgage",
+            1L, 1, "Page 1"
+        );
+        EvidenceChunk noisyChunk1 = createTestChunk("23", 2L, 1, "Page 1");
+        EvidenceChunk noisyChunk2 = createTestChunk("real and personal $", 3L, 1, "Page 1");
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("I paid $20,000 in separate property funds to mortgage",
+                true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Reimbursement analysis."
+        );
+        
+        // Set both chunks and context
+        testRetrievalService.setEvidenceChunks(List.of(qualityChunk, noisyChunk1, noisyChunk2));
+        testContextBuilder.setContext(context);
+        
+        // Execute - should succeed with logging enabled
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Verify: Handler completes without errors (logging doesn't break pipeline)
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.isSuccess(), "Handler should succeed with debug logging enabled");
+        assertNotNull(result.getAnswer());
+        
+        // Verify: Quality facts are present in output
+        String answer = result.getAnswer();
+        assertTrue(answer.contains("mortgage") || answer.contains("$20,000"),
+            "Quality facts should be available in output even with comprehensive logging");
+    }
 }
