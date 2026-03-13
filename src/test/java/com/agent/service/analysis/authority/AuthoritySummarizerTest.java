@@ -149,6 +149,85 @@ class AuthoritySummarizerTest {
     }
     
     @Test
+    void testPreservesStatuteWhenMixedAuthorities() {
+        // Given: A reimbursement issue with both statute and case law authorities
+        // This tests the critical preservation logic for statutes
+        CaseIssue issue = new CaseIssue(
+            LegalIssueType.REIMBURSEMENT,
+            "post separation mortgage reimbursement",
+            0.85,
+            "reimbursement, mortgage"
+        );
+        
+        // Create authorities in order: case law authorities first, statute last
+        // This simulates retrieval where case law might score higher but statute should be preserved
+        LegalAuthority mooreCase = new LegalAuthority(
+            "case-moore-001",
+            "Marriage of Moore",
+            "28 Cal.4th 366 (2000)",
+            AuthorityType.CASE_LAW,
+            "California Supreme Court",
+            "General property characterization principles.",
+            0.78
+        );
+        
+        LegalAuthority epsteinCase = new LegalAuthority(
+            "case-epstein-001",
+            "Marriage of Epstein",
+            "191 Cal.App.3d 592 (1987)",
+            AuthorityType.CASE_LAW,
+            "California Appellate Court",
+            "A spouse who uses separate property to pay community obligations after separation may be entitled to reimbursement.",
+            0.92
+        );
+        
+        LegalAuthority familyCodeStatute = new LegalAuthority(
+            "statute-fam-750",
+            "California Family Code § 750",
+            "Cal. Fam. Code § 750",
+            AuthorityType.STATUTE,
+            "California Legislature",
+            "Community property consists of all property acquired during marriage except separate property.",
+            0.80
+        );
+        
+        // Create matches with Epstein highest, then statute, then Moore
+        AuthorityMatch match1 = new AuthorityMatch(LegalIssueType.REIMBURSEMENT, epsteinCase, 0.92, "query");
+        AuthorityMatch match2 = new AuthorityMatch(LegalIssueType.REIMBURSEMENT, familyCodeStatute, 0.80, "query");
+        AuthorityMatch match3 = new AuthorityMatch(LegalIssueType.REIMBURSEMENT, mooreCase, 0.78, "query");
+        
+        List<AuthorityMatch> matches = List.of(match1, match2, match3);
+        
+        // When: Summarizing
+        AuthoritySummary summary = summarizer.summarize(issue, matches);
+        
+        // Then: Should preserve both Epstein AND the statute
+        assertNotNull(summary, "Summary should not be null");
+        assertTrue(summary.getAuthorityCount() >= 2,
+            "Should have at least 2 authorities (statute + case law), but got: " + summary.getAuthorityCount());
+        
+        // Extract the authority IDs that were kept
+        List<String> keptIds = summary.getAuthorities().stream()
+            .map(auth -> auth.getAuthorityId())
+            .toList();
+        
+        // Log what was kept for visibility
+        System.out.println("✓ Kept " + keptIds.size() + " authorities: " + keptIds);
+        
+        // CRITICAL: Statute should be preserved
+        assertTrue(keptIds.contains("statute-fam-750"),
+            "CRITICAL: Statute (Family Code § 750) should be preserved in summary. " +
+            "Kept authorities: " + keptIds);
+        
+        // CRITICAL: Epstein should be preserved
+        assertTrue(keptIds.contains("case-epstein-001"),
+            "Epstein case should be preserved as it's relevant to reimbursement. Kept authorities: " + keptIds);
+        
+        // Moore might or might not be kept depending on final count, that's OK
+        // The key requirement is that statute is preserved
+    }
+    
+    @Test
     void testSummarizeWithNoAuthorities() {
         // Given: An issue with no matching authorities
         CaseIssue issue = new CaseIssue(

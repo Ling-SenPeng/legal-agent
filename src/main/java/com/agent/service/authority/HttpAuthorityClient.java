@@ -66,6 +66,9 @@ public class HttpAuthorityClient implements AuthorityClient {
                 return Collections.emptyList();
             }
             
+            // Normalize relevance scores to 0.0-1.0 range
+            results = normalizeRelevanceScores(results);
+            
             logger.info("Found {} authorities for query: '{}'", results.size(), query);
             return results;
         } catch (Exception e) {
@@ -99,6 +102,9 @@ public class HttpAuthorityClient implements AuthorityClient {
                 logger.debug("Null response from findAuthoritiesByTopic, returning empty list");
                 return Collections.emptyList();
             }
+            
+            // Normalize relevance scores to 0.0-1.0 range
+            results = normalizeRelevanceScores(results);
             
             logger.info("Found {} authorities for topic: '{}'", results.size(), topic);
             return results;
@@ -141,5 +147,69 @@ public class HttpAuthorityClient implements AuthorityClient {
         
         logger.info("Merged and deduplicated to {} unique authorities", merged.size());
         return merged;
+    }
+    
+    /**
+     * Normalize relevance scores to be within 0.0-1.0 range.
+     * If any score is outside this range, normalize all scores using min-max scaling.
+     * 
+     * @param authorities List of authorities to normalize
+     * @return List with normalized relevance scores
+     */
+    private List<RetrievedAuthority> normalizeRelevanceScores(List<RetrievedAuthority> authorities) {
+        if (authorities == null || authorities.isEmpty()) {
+            return authorities;
+        }
+        
+        // Check if any score is outside 0.0-1.0 range
+        boolean needsNormalization = authorities.stream()
+            .anyMatch(a -> a.getRelevanceScore() < 0.0 || a.getRelevanceScore() > 1.0);
+        
+        if (!needsNormalization) {
+            return authorities;
+        }
+        
+        // Find min and max scores
+        double minScore = authorities.stream()
+            .mapToDouble(RetrievedAuthority::getRelevanceScore)
+            .min()
+            .orElse(0.0);
+        
+        double maxScore = authorities.stream()
+            .mapToDouble(RetrievedAuthority::getRelevanceScore)
+            .max()
+            .orElse(1.0);
+        
+        logger.debug("Normalizing relevance scores from range [{}, {}] to [0.0, 1.0]", minScore, maxScore);
+        
+        // If all scores are the same, set them to 1.0
+        if (maxScore == minScore) {
+            return authorities.stream()
+                .map(auth -> new RetrievedAuthority(
+                    auth.getAuthorityId(),
+                    auth.getTitle(),
+                    auth.getCitation(),
+                    auth.getAuthorityType(),
+                    auth.getRuleSummary(),
+                    1.0
+                ))
+                .collect(Collectors.toList());
+        }
+        
+        // Min-max normalization: (x - min) / (max - min)
+        final double range = maxScore - minScore;
+        return authorities.stream()
+            .map(auth -> {
+                double normalized = (auth.getRelevanceScore() - minScore) / range;
+                return new RetrievedAuthority(
+                    auth.getAuthorityId(),
+                    auth.getTitle(),
+                    auth.getCitation(),
+                    auth.getAuthorityType(),
+                    auth.getRuleSummary(),
+                    normalized
+                );
+            })
+            .collect(Collectors.toList());
     }
 }

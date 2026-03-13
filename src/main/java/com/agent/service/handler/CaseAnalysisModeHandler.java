@@ -5,6 +5,7 @@ import com.agent.model.TaskMode;
 import com.agent.model.EvidenceChunk;
 import com.agent.model.analysis.*;
 import com.agent.model.analysis.authority.AuthoritySummary;
+import com.agent.model.analysis.authority.LegalAuthority;
 import com.agent.service.TaskModeHandler;
 import com.agent.service.RetrievalService;
 import com.agent.service.analysis.CaseAnalysisContextBuilder;
@@ -23,6 +24,7 @@ import java.util.stream.Collectors;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.ArrayList;
 
@@ -244,6 +246,22 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                 topK
             );
             
+            // Log raw retrieved authorities with full details
+            if (logger.isDebugEnabled() && !authorityMatches.isEmpty()) {
+                StringBuilder rawAuthLog = new StringBuilder("\n[CASE_ANALYSIS_RAW_AUTHORITIES] Issue: ");
+                rawAuthLog.append(issue.getType()).append("\n");
+                for (com.agent.model.analysis.authority.AuthorityMatch match : authorityMatches) {
+                    LegalAuthority auth = match.getAuthority();
+                    rawAuthLog.append(String.format("  - %s | %s | %s | score=%.3f\n",
+                        auth.getAuthorityId(),
+                        auth.getTitle(),
+                        auth.getAuthorityType(),
+                        auth.getRelevanceScore()
+                    ));
+                }
+                logger.debug(rawAuthLog.toString());
+            }
+            
             // Summarize authorities into rule description
             AuthoritySummary summary = authoritySummarizer.summarize(issue, authorityMatches);
             summaries.add(summary);
@@ -253,6 +271,203 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         }
         
         return summaries;
+    }
+
+    /**
+     * Rank and score authorities based on relevance to the identified issue.
+     * 
+     * Uses issue type and keywords to score authorities more intelligently:
+     * - For REIMBURSEMENT: checks for Epstein, reimbursement, post-separation keywords
+     * - For TRACING: checks for tracing, contribution, fund source keywords
+     * - Prefers CASE_LAW and STATUTE types
+     * - Uses title/summary content matching and original relevance score
+     * 
+     * Returns top authorities sorted by calculated relevance score.
+     * 
+     * @param issue The legal issue being analyzed
+     * @param authorities List of authorities to rank
+     * @return Ranked list of authorities (best matches first)
+     */
+    private List<LegalAuthority> rankAuthoritiesForIssue(CaseIssue issue, List<LegalAuthority> authorities) {
+        if (authorities.isEmpty()) {
+            return authorities;
+        }
+        
+        // Score each authority
+        Map<LegalAuthority, Double> authorityScores = new LinkedHashMap<>();
+        
+        for (LegalAuthority auth : authorities) {
+            double score = calculateAuthorityRelevanceScore(issue, auth);
+            authorityScores.put(auth, score);
+        }
+        
+        // Sort by score (descending) and return
+        return authorityScores.entrySet().stream()
+            .sorted((e1, e2) -> Double.compare(e2.getValue(), e1.getValue()))
+            .map(Map.Entry::getKey)
+            .toList();
+    }
+
+    /**
+     * Calculate relevance score for an authority relative to a specific issue.
+     * 
+     * Scoring factors:
+     * 1. Base score from relevanceScore (0.5x weight)
+     * 2. Authority type bonus: STATUTE/CASE_LAW get +0.15, others get +0.05 (0.25x weight)
+     * 3. Issue-specific keyword matching in title/summary (0.25x weight)
+     * 
+     * @param issue The legal issue
+     * @param authority The authority being scored
+     * @return Relevance score (0.0 - 2.0+)
+     */
+    private double calculateAuthorityRelevanceScore(CaseIssue issue, LegalAuthority authority) {
+        double baseScore = authority.getRelevanceScore() * 0.5;  // 0.0 - 0.5
+        
+        // Authority type bonus: STATUTE and CASE_LAW are more authoritative
+        double typeBonus = 0.0;
+        if (authority.getAuthorityType() == com.agent.model.analysis.authority.AuthorityType.STATUTE ||
+            authority.getAuthorityType() == com.agent.model.analysis.authority.AuthorityType.CASE_LAW) {
+            typeBonus = 0.15;
+        } else {
+            typeBonus = 0.05;
+        }
+        
+        // Issue-specific keyword matching in title and summary
+        double keywordScore = calculateIssueSpecificKeywordScore(issue, authority) * 0.25;
+        
+        return baseScore + typeBonus + keywordScore;
+    }
+
+    /**
+     * Calculate keyword match score for specific issue type.
+     * 
+     * @param issue The legal issue
+     * @param authority The authority being evaluated
+     * @return Keyword match score (0.0 - 1.0)
+     */
+    private double calculateIssueSpecificKeywordScore(CaseIssue issue, LegalAuthority authority) {
+        String titleLower = authority.getTitle().toLowerCase();
+        String summaryLower = authority.getSummary().toLowerCase();
+        String combined = titleLower + " " + summaryLower;
+        
+        switch (issue.getType()) {
+            case REIMBURSEMENT:
+                return scoreReimbursementAuthority(titleLower, summaryLower, combined);
+            case TRACING:
+                return scoreTracingAuthority(titleLower, summaryLower, combined);
+            case PROPERTY_CHARACTERIZATION:
+                return scorePropertyCharacterizationAuthority(titleLower, summaryLower, combined);
+            case SUPPORT:
+                return scoreSupportAuthority(titleLower, summaryLower, combined);
+            default:
+                return scoreGenericAuthority(titleLower, summaryLower, combined);
+        }
+    }
+
+    /**
+     * Score authority for REIMBURSEMENT issues.
+     * Looks for: Epstein, reimbursement, post-separation payments, contribution tracing
+     */
+    private double scoreReimbursementAuthority(String titleLower, String summaryLower, String combined) {
+        double score = 0.0;
+        
+        // Strong match: Epstein
+        if (titleLower.contains("epstein")) {
+            score += 0.8;
+        } else if (summaryLower.contains("epstein")) {
+            score += 0.5;
+        }
+        
+        // Strong match: reimbursement
+        if (titleLower.contains("reimbursement")) {
+            score += 0.4;
+        } else if (summaryLower.contains("reimbursement")) {
+            score += 0.2;
+        }
+        
+        // Good match: post-separation payments or mortgage
+        if (combined.contains("post-separation") && (combined.contains("payment") || combined.contains("mortgage"))) {
+            score += 0.3;
+        } else if (combined.contains("post-separation")) {
+            score += 0.15;
+        }
+        
+        // Good match: contribution or tracing
+        if (combined.contains("contribution") || combined.contains("tracing")) {
+            score += 0.2;
+        }
+        
+        // Penalty: generic property references (Moore, property characterization, etc.)
+        if (titleLower.contains("moore") && !titleLower.contains("reimbursement")) {
+            score -= 0.3;  // Reduce score for generic property cases
+        }
+        
+        return Math.max(0.0, Math.min(1.0, score));  // Clamp to 0.0-1.0
+    }
+
+    /**
+     * Score authority for TRACING issues.
+     * Looks for: tracing, fund source, contribution, down payment, separate property contribution
+     */
+    private double scoreTracingAuthority(String titleLower, String summaryLower, String combined) {
+        double score = 0.0;
+        
+        if (combined.contains("tracing")) {
+            score += 0.5;
+        }
+        if (combined.contains("fund") || combined.contains("down payment")) {
+            score += 0.3;
+        }
+        if (combined.contains("contribution") || combined.contains("separate property")) {
+            score += 0.2;
+        }
+        
+        return Math.max(0.0, Math.min(1.0, score));
+    }
+
+    /**
+     * Score authority for PROPERTY_CHARACTERIZATION issues.
+     * Looks for: characterization, community property, separate property, transmutation
+     */
+    private double scorePropertyCharacterizationAuthority(String titleLower, String summaryLower, String combined) {
+        double score = 0.0;
+        
+        if (combined.contains("characterization")) {
+            score += 0.4;
+        }
+        if (combined.contains("community property") || combined.contains("separate property")) {
+            score += 0.3;
+        }
+        if (combined.contains("transmutation")) {
+            score += 0.2;
+        }
+        
+        return Math.max(0.0, Math.min(1.0, score));
+    }
+
+    /**
+     * Score authority for SUPPORT issues.
+     * Looks for: support, alimony, maintenance, child support
+     */
+    private double scoreSupportAuthority(String titleLower, String summaryLower, String combined) {
+        double score = 0.0;
+        
+        if (combined.contains("support") || combined.contains("alimony") || combined.contains("maintenance")) {
+            score += 0.5;
+        }
+        if (combined.contains("child support")) {
+            score += 0.3;
+        }
+        
+        return Math.max(0.0, Math.min(1.0, score));
+    }
+
+    /**
+     * Generic scoring for other issue types - just check if authority words appear in combined text
+     */
+    private double scoreGenericAuthority(String titleLower, String summaryLower, String combined) {
+        // For generic issues, return slight preference for case law
+        return 0.2;
     }
 
     /**
@@ -548,30 +763,17 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         answer.append("---\n");
         answer.append(context.getLegalStandardSummary()).append("\n\n");
         
+        // Collect all unique authorities for deduplication across sections
+        Set<String> renderedAuthorityIds = new LinkedHashSet<>();
+        
+        // NEW: Simple, flat Relevant Authorities section (top 2-3 unique authorities)
+        answer.append("RELEVANT AUTHORITIES\n");
+        answer.append("---\n");
+        appendRelevantAuthoritiesSection(answer, context, renderedAuthorityIds);
+        
         answer.append("RELEVANT AUTHORITIES & RULE SUMMARY\n");
         answer.append("---\n");
-        if (context.getAuthoritySummaries().isEmpty()) {
-            answer.append("No specific authorities retrieved for the identified issues.\n\n");
-        } else {
-            for (AuthoritySummary authoritySummary : context.getAuthoritySummaries()) {
-                answer.append(String.format("For %s Issue:\n", 
-                    authoritySummary.getIssueType().toString().replace("_", " ").toLowerCase()));
-                answer.append(String.format("Rule: %s\n", authoritySummary.getSummarizedRule()));
-                
-                if (!authoritySummary.getAuthorities().isEmpty()) {
-                    answer.append("Supporting Authorities:\n");
-                    authoritySummary.getAuthorities().stream()
-                        .limit(3)
-                        .forEach(auth -> answer.append(String.format(
-                            "  - %s (%s) - %s\n",
-                            auth.getCitation(),
-                            auth.getAuthorityType(),
-                            auth.getTitle()
-                        )));
-                }
-                answer.append("\n");
-            }
-        }
+        appendRulesSummarySection(answer, context, renderedAuthorityIds);
         
         answer.append("APPLICATION SUMMARY\n");
         answer.append("---\n");
@@ -637,6 +839,242 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         return answer.toString();
     }
+
+    /**
+     * Append the Relevant Authorities section with top unique authorities (2-3 max).
+     * Includes debug logging to track raw, ranked, and rendered authorities.
+     * 
+     * @param answer StringBuilder to append to
+     * @param context Case analysis context containing authority summaries
+     * @param renderedAuthorityIds Set to track which authorities have been rendered (for dedup)
+     */
+    private void appendRelevantAuthoritiesSection(
+        StringBuilder answer, 
+        CaseAnalysisContext context, 
+        Set<String> renderedAuthorityIds
+    ) {
+        // Collect all unique authorities from all summaries
+        Map<String, LegalAuthority> authorityMap = new LinkedHashMap<>();
+        
+        for (AuthoritySummary summary : context.getAuthoritySummaries()) {
+            for (LegalAuthority auth : summary.getAuthorities()) {
+                // Deduplicate by authorityId
+                if (!authorityMap.containsKey(auth.getAuthorityId())) {
+                    authorityMap.put(auth.getAuthorityId(), auth);
+                }
+            }
+        }
+        
+        List<LegalAuthority> uniqueAuthorities = new ArrayList<>(authorityMap.values());
+        
+        // Log raw authorities before ranking
+        if (logger.isDebugEnabled() && !uniqueAuthorities.isEmpty() && !context.getIdentifiedIssues().isEmpty()) {
+            StringBuilder rawLog = new StringBuilder("\n[CASE_ANALYSIS_AUTHORITY_SELECTION_START]\n");
+            CaseIssue primaryIssue = context.getIdentifiedIssues().get(0);
+            rawLog.append("Issue: ").append(primaryIssue.getType()).append("\n");
+            rawLog.append("Raw authorities before re-ranking (").append(uniqueAuthorities.size()).append(" total):\n");
+            for (LegalAuthority auth : uniqueAuthorities) {
+                rawLog.append(String.format("  - %s | %s | %s | score=%.3f\n",
+                    auth.getAuthorityId(),
+                    auth.getTitle(),
+                    auth.getAuthorityType(),
+                    auth.getRelevanceScore()
+                ));
+            }
+            logger.debug(rawLog.toString());
+        }
+        
+        // Re-rank authorities by relevance to the identified issues
+        // Use the first issue as primary for ranking
+        if (!uniqueAuthorities.isEmpty() && !context.getIdentifiedIssues().isEmpty()) {
+            CaseIssue primaryIssue = context.getIdentifiedIssues().get(0);
+            uniqueAuthorities = rankAuthoritiesForIssue(primaryIssue, uniqueAuthorities);
+            
+            // Log ranked authorities with calculated scores
+            if (logger.isDebugEnabled()) {
+                StringBuilder rankedLog = new StringBuilder("\nRe-ranked authorities for issue ");
+                rankedLog.append(primaryIssue.getType()).append(":\n");
+                for (int i = 0; i < uniqueAuthorities.size(); i++) {
+                    LegalAuthority auth = uniqueAuthorities.get(i);
+                    double calculatedScore = calculateAuthorityRelevanceScore(primaryIssue, auth);
+                    double keywordScore = calculateIssueSpecificKeywordScore(primaryIssue, auth);
+                    rankedLog.append(String.format("  [%d] %s | %s\n",
+                        (i + 1),
+                        auth.getAuthorityId(),
+                        auth.getTitle()
+                    ));
+                    rankedLog.append(String.format("       base_score=%.3f, calc_score=%.3f (keyword_score=%.3f)\n",
+                        auth.getRelevanceScore(),
+                        calculatedScore,
+                        keywordScore
+                    ));
+                }
+                logger.debug(rankedLog.toString());
+            }
+        } else {
+            // Fallback: sort by citation if no issues
+            uniqueAuthorities.sort((a, b) -> a.getCitation().compareTo(b.getCitation()));
+        }
+        
+        if (uniqueAuthorities.isEmpty()) {
+            answer.append("No authorities retrieved for the identified issues.\n\n");
+        } else {
+            // Show top 2-3 authorities
+            List<LegalAuthority> renderedList = uniqueAuthorities.stream()
+                .limit(3)
+                .peek(auth -> renderedAuthorityIds.add(auth.getAuthorityId()))
+                .toList();
+            
+            // Log final rendered authorities
+            if (logger.isDebugEnabled()) {
+                StringBuilder renderedLog = new StringBuilder("\nFinal rendered authorities (");
+                renderedLog.append(renderedList.size()).append(" shown):\n");
+                for (LegalAuthority auth : renderedList) {
+                    renderedLog.append(String.format("  - %s | %s\n",
+                        auth.getAuthorityId(),
+                        auth.getTitle()
+                    ));
+                }
+                renderedLog.append("[CASE_ANALYSIS_AUTHORITY_SELECTION_END]\n");
+                logger.debug(renderedLog.toString());
+            }
+            
+            renderedList.forEach(auth -> {
+                answer.append(String.format("- %s (%s): %s\n",
+                    auth.getCitation(),
+                    auth.getAuthorityType().toString().replace("_", " "),
+                    auth.getTitle()
+                ));
+            });
+            answer.append("\n");
+        }
+    }
+
+    /**
+     * Append the Relevant Authorities & Rule Summary section with only unique authorities
+     * that have not already been rendered in the main Relevant Authorities section.
+     * Includes debug logging to track authority selection per issue.
+     * 
+     * @param answer StringBuilder to append to
+     * @param context Case analysis context
+     * @param renderedAuthorityIds Set of authorities already rendered in main section
+     */
+    private void appendRulesSummarySection(
+        StringBuilder answer,
+        CaseAnalysisContext context,
+        Set<String> renderedAuthorityIds
+    ) {
+        if (context.getAuthoritySummaries().isEmpty()) {
+            answer.append("No specific authorities retrieved for the identified issues.\n\n");
+        } else {
+            for (int issueIdx = 0; issueIdx < context.getAuthoritySummaries().size(); issueIdx++) {
+                AuthoritySummary authoritySummary = context.getAuthoritySummaries().get(issueIdx);
+                
+                answer.append(String.format("For %s Issue:\n", 
+                    authoritySummary.getIssueType().toString().replace("_", " ").toLowerCase()));
+                answer.append(String.format("Rule: %s\n", authoritySummary.getSummarizedRule()));
+                
+                if (!authoritySummary.getAuthorities().isEmpty()) {
+                    // Deduplicate and filter out already-rendered authorities
+                    Map<String, LegalAuthority> uniqueInSummary = new LinkedHashMap<>();
+                    for (LegalAuthority auth : authoritySummary.getAuthorities()) {
+                        // Only include if not already rendered in main section and not already in this summary
+                        if (!renderedAuthorityIds.contains(auth.getAuthorityId()) &&
+                            !uniqueInSummary.containsKey(auth.getAuthorityId())) {
+                            uniqueInSummary.put(auth.getAuthorityId(), auth);
+                        }
+                    }
+                    
+                    if (!uniqueInSummary.isEmpty()) {
+                        // Log raw authorities for this issue before ranking
+                        if (logger.isDebugEnabled()) {
+                            StringBuilder rawLog = new StringBuilder("\n[CASE_ANALYSIS_RULESUMMARY_START] Issue: ");
+                            rawLog.append(authoritySummary.getIssueType()).append("\n");
+                            rawLog.append("Raw authorities before re-ranking (").append(uniqueInSummary.size()).append(" total):\n");
+                            for (LegalAuthority auth : uniqueInSummary.values()) {
+                                rawLog.append(String.format("  - %s | %s | %s | score=%.3f\n",
+                                    auth.getAuthorityId(),
+                                    auth.getTitle(),
+                                    auth.getAuthorityType(),
+                                    auth.getRelevanceScore()
+                                ));
+                            }
+                            logger.debug(rawLog.toString());
+                        }
+                        
+                        // Re-rank authorities by issue relevance
+                        CaseIssue issueForRanking = null;
+                        // Find the matching issue from context
+                        for (CaseIssue contextIssue : context.getIdentifiedIssues()) {
+                            if (contextIssue.getType() == authoritySummary.getIssueType()) {
+                                issueForRanking = contextIssue;
+                                break;
+                            }
+                        }
+                        
+                        List<LegalAuthority> rankedAuthorities = new ArrayList<>(uniqueInSummary.values());
+                        if (issueForRanking != null) {
+                            rankedAuthorities = rankAuthoritiesForIssue(issueForRanking, rankedAuthorities);
+                            
+                            // Log ranked authorities
+                            if (logger.isDebugEnabled()) {
+                                StringBuilder rankedLog = new StringBuilder("\nRe-ranked authorities for ");
+                                rankedLog.append(issueForRanking.getType()).append(":\n");
+                                for (int i = 0; i < rankedAuthorities.size(); i++) {
+                                    LegalAuthority auth = rankedAuthorities.get(i);
+                                    double calculatedScore = calculateAuthorityRelevanceScore(issueForRanking, auth);
+                                    double keywordScore = calculateIssueSpecificKeywordScore(issueForRanking, auth);
+                                    rankedLog.append(String.format("  [%d] %s | %s\n",
+                                        (i + 1),
+                                        auth.getAuthorityId(),
+                                        auth.getTitle()
+                                    ));
+                                    rankedLog.append(String.format("       base_score=%.3f, calc_score=%.3f (keyword_score=%.3f)\n",
+                                        auth.getRelevanceScore(),
+                                        calculatedScore,
+                                        keywordScore
+                                    ));
+                                }
+                                logger.debug(rankedLog.toString());
+                            }
+                        }
+                        
+                        answer.append("Supporting Authorities:\n");
+                        List<LegalAuthority> renderedList = rankedAuthorities.stream()
+                            .limit(3)
+                            .peek(auth -> renderedAuthorityIds.add(auth.getAuthorityId()))
+                            .toList();
+                        
+                        // Log final rendered authorities for this issue
+                        if (logger.isDebugEnabled()) {
+                            StringBuilder renderedLog = new StringBuilder("\nFinal rendered authorities (");
+                            renderedLog.append(renderedList.size()).append(" shown):\n");
+                            for (LegalAuthority auth : renderedList) {
+                                renderedLog.append(String.format("  - %s | %s\n",
+                                    auth.getAuthorityId(),
+                                    auth.getTitle()
+                                ));
+                            }
+                            renderedLog.append("[CASE_ANALYSIS_RULESUMMARY_END]\n");
+                            logger.debug(renderedLog.toString());
+                        }
+                        
+                        renderedList.forEach(auth -> {
+                            answer.append(String.format(
+                                "  - %s (%s) - %s\n",
+                                auth.getCitation(),
+                                auth.getAuthorityType(),
+                                auth.getTitle()
+                            ));
+                        });
+                    }
+                }
+                answer.append("\n");
+            }
+        }
+    }
+
+
 
     /**
      * Generate opposing argument based on case facts.
