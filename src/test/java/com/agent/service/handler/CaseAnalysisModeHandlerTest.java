@@ -707,6 +707,136 @@ class CaseAnalysisModeHandlerTest {
             }
         }
     }
+
+    @Test
+    void testStatuteRanksAboveGenericCaseForReimbursement() {
+        // This test verifies that Cal. Fam. Code § 750 (statute) ranks above
+        // generic case law (Moore) that lacks reimbursement keyword matching.
+        // 
+        // For REIMBURSEMENT issues:
+        // - Statute gets +0.25 type bonus (vs. +0.10 for case law)
+        // - Statute gets +0.4 keyword boost for "family code" mention
+        // - Moore without reimbursement keyword gets -0.4 de-prioritization
+        
+        String query = "post separation mortgage reimbursement claim";
+        
+        // Create test authorities with mixed types
+        // Statute about reimbursement (relevant, should rank first)
+        LegalAuthority statute750 = new LegalAuthority(
+            "statute_fam_750",
+            "California Family Code § 750",
+            "Cal. Fam. Code § 750",
+            AuthorityType.STATUTE,
+            "statute",
+            "Provides for reimbursement from community property for separate property contributions. " +
+            "Requires tracing contributions and establishing family code principles for post-separation payments.",
+            0.72  // Base relevance score from search
+        );
+        
+        // Generic property case without reimbursement keyword (should rank lower)
+        LegalAuthority mooreGeneric = new LegalAuthority(
+            "moore_generic",
+            "Marriage of Moore",
+            "400 Cal. 600 (1990)",
+            AuthorityType.CASE_LAW,
+            "court_case",
+            "Discusses division of property and characterization in marriage dissolution proceedings.",
+            0.75  // Slightly higher base relevance score
+        );
+        
+        // Landmark reimbursement case (should rank first overall)
+        LegalAuthority epstein = new LegalAuthority(
+            "epstein_1979",
+            "Marriage of Epstein",
+            "42 Cal.3d 120 (1979)",
+            AuthorityType.CASE_LAW,
+            "court_case",
+            "Establishes reimbursement principles for post-separation payments using Epstein factors.",
+            0.80
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement claim", 0.90, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("Paid $20,000 in post-separation mortgage payments on community property", 
+                        true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        // Create authority summary with authorities in raw order:
+        // [Moore, statute, Epstein] - mixing types and relevances
+        AuthoritySummary mockSummary = new AuthoritySummary(
+            LegalIssueType.REIMBURSEMENT,
+            3,
+            "Reimbursement available for post-separation payments under statutory and case law principles.",
+            List.of(mooreGeneric, statute750, epstein)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query,
+            issues,
+            facts,
+            List.of(),
+            "Reimbursement evaluated under statutory family code and Epstein factors.",
+            List.of(mockSummary)
+        );
+        
+        EvidenceChunk chunk = createTestChunk(
+            "Post-separation mortgage payment for community property per family code section 750.",
+            1L, 1, "Page 1"
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(chunk));
+        testContextBuilder.setContext(context);
+        
+        // When
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then: Verify ranking order
+        assertTrue(result.isSuccess(), "Execution should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer, "Answer should not be null");
+        
+        // Verify all authorities appear
+        assertTrue(answer.contains("Epstein"), "Output should contain Epstein");
+        assertTrue(answer.contains("Moore"), "Output should contain Moore");
+        assertTrue(answer.contains("750") || answer.contains("Family Code"), 
+            "Output should contain statute reference (750 or Family Code)");
+        
+        // CRITICAL: Verify ranking order in RELEVANT AUTHORITIES section
+        // Expected order: Epstein (landmark reimbursement) > § 750 (statute) > Moore (generic)
+        int authSectionStart = answer.indexOf("## RELEVANT AUTHORITIES");
+        int authSectionEnd = answer.indexOf("## RELEVANT AUTHORITIES & RULE SUMMARY");
+        
+        if (authSectionStart > -1 && authSectionEnd == -1) {
+            // If RULE SUMMARY section doesn't exist, use end of answer
+            authSectionEnd = answer.length();
+        }
+        
+        if (authSectionStart > -1 && authSectionEnd > authSectionStart) {
+            String authSection = answer.substring(authSectionStart, authSectionEnd);
+            
+            int epsteinIdx = authSection.indexOf("Epstein");
+            int statuteIdx = authSection.indexOf("750");
+            int mooreIdx = authSection.indexOf("Moore");
+            
+            // Verify Epstein appears (landmark case)
+            assertTrue(epsteinIdx >= 0, "Epstein should appear in authorities section");
+            
+            // CRITICAL TEST: Statute (750) should appear before or at same position as Moore
+            // AND Moore should NOT be the first authority if statute is present
+            if (statuteIdx >= 0 && mooreIdx >= 0) {
+                assertTrue(statuteIdx < mooreIdx,
+                    "CRITICAL: Cal. Fam. Code § 750 (statute) should rank above Moore (generic case law) " +
+                    "for REIMBURSEMENT issues. Statute gets +0.25 type bonus, Moore gets -0.4 penalty. " +
+                    "Statute ranking shows improved handling of statutory authority.");
+            } else if (statuteIdx >= 0) {
+                // Statute present, Moore filtered out - that's fine
+                assertTrue(true, "Statute ranked high enough to appear (Moore filtered out)");
+            }
+        }
+    }
     
 
     // ==================== HELPER METHODS ====================

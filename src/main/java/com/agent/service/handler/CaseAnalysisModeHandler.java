@@ -313,7 +313,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * 
      * Scoring factors:
      * 1. Base score from relevanceScore (0.5x weight)
-     * 2. Authority type bonus: STATUTE/CASE_LAW get +0.15, others get +0.05 (0.25x weight)
+     * 2. Authority type bonus: Issue-aware bonus, higher for STATUTE on REIMBURSEMENT (0.25x weight)
      * 3. Issue-specific keyword matching in title/summary (0.25x weight)
      * 
      * @param issue The legal issue
@@ -323,13 +323,21 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private double calculateAuthorityRelevanceScore(CaseIssue issue, LegalAuthority authority) {
         double baseScore = authority.getRelevanceScore() * 0.5;  // 0.0 - 0.5
         
-        // Authority type bonus: STATUTE and CASE_LAW are more authoritative
+        // Authority type bonus: Issue-aware, stronger boost for STATUTE on REIMBURSEMENT
         double typeBonus = 0.0;
-        if (authority.getAuthorityType() == com.agent.model.analysis.authority.AuthorityType.STATUTE ||
-            authority.getAuthorityType() == com.agent.model.analysis.authority.AuthorityType.CASE_LAW) {
-            typeBonus = 0.15;
+        com.agent.model.analysis.authority.AuthorityType authType = authority.getAuthorityType();
+        
+        if (authType == com.agent.model.analysis.authority.AuthorityType.STATUTE) {
+            // STATUTE gets strong boost, especially for REIMBURSEMENT (relevant statutes like Cal. Fam. Code § 750)
+            if (issue.getType() == com.agent.model.analysis.LegalIssueType.REIMBURSEMENT) {
+                typeBonus = 0.25;  // Prioritize statutes for reimbursement issues
+            } else {
+                typeBonus = 0.20;  // Still strong boost for other issue types
+            }
+        } else if (authType == com.agent.model.analysis.authority.AuthorityType.CASE_LAW) {
+            typeBonus = 0.10;  // Case law gets moderate boost
         } else {
-            typeBonus = 0.05;
+            typeBonus = 0.05;  // Practice guides and commentary get light boost
         }
         
         // Issue-specific keyword matching in title and summary
@@ -366,40 +374,50 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
 
     /**
      * Score authority for REIMBURSEMENT issues.
-     * Looks for: Epstein, reimbursement, post-separation payments, contribution tracing
+     * Looks for: Epstein, reimbursement, post-separation payments, contribution tracing, Cal. Fam. Code § 750 topics
      */
     private double scoreReimbursementAuthority(String titleLower, String summaryLower, String combined) {
         double score = 0.0;
         
-        // Strong match: Epstein
+        // Strong match: Epstein (landmark reimbursement case)
         if (titleLower.contains("epstein")) {
             score += 0.8;
         } else if (summaryLower.contains("epstein")) {
             score += 0.5;
         }
         
-        // Strong match: reimbursement
+        // Strong match: reimbursement keyword (directly relevant)
         if (titleLower.contains("reimbursement")) {
-            score += 0.4;
+            score += 0.5;  // Increased from 0.4 - reimbursement is key issue
         } else if (summaryLower.contains("reimbursement")) {
-            score += 0.2;
+            score += 0.3;  // Increased from 0.2
         }
         
-        // Good match: post-separation payments or mortgage
+        // Strong match: Cal. Fam. Code § 750 topics (statute about reimbursement)
+        // Topics: reimbursement, post_separation_payments, community_debt, separate_property_contribution
+        if (combined.contains("family code") || combined.contains("fam. code") || combined.contains("fam code")) {
+            score += 0.4;  // Statute about family law reimbursement
+        }
         if (combined.contains("post-separation") && (combined.contains("payment") || combined.contains("mortgage"))) {
-            score += 0.3;
+            score += 0.35;  // Increased from 0.3
         } else if (combined.contains("post-separation")) {
-            score += 0.15;
+            score += 0.2;  // Increased from 0.15
         }
         
-        // Good match: contribution or tracing
+        // Good match: contribution or tracing (reimbursement mechanics)
         if (combined.contains("contribution") || combined.contains("tracing")) {
-            score += 0.2;
+            score += 0.25;  // Increased from 0.2
         }
         
-        // Penalty: generic property references (Moore, property characterization, etc.)
-        if (titleLower.contains("moore") && !titleLower.contains("reimbursement")) {
-            score -= 0.3;  // Reduce score for generic property cases
+        // Strong de-prioritization: generic property references without reimbursement keyword
+        // (Moore, property characterization, etc. that don't mention reimbursement)
+        if (titleLower.contains("moore") && !combined.contains("reimbursement")) {
+            score -= 0.4;  // Increased penalty from 0.3
+        }
+        // De-prioritize "division" or "characterization" focused cases without post-sep/reimbursement mention
+        if ((titleLower.contains("division") || titleLower.contains("characterization")) && 
+            !combined.contains("reimbursement") && !combined.contains("post-separation")) {
+            score -= 0.2;
         }
         
         return Math.max(0.0, Math.min(1.0, score));  // Clamp to 0.0-1.0
