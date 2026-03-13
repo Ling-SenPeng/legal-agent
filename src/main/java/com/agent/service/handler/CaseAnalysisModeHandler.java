@@ -16,6 +16,7 @@ import com.agent.service.analysis.CaseIssueExtractor;
 import com.agent.service.analysis.authority.IssueAuthorityRetrievalStrategy;
 import com.agent.service.analysis.authority.AuthorityRetrievalService;
 import com.agent.service.analysis.authority.AuthoritySummarizer;
+import com.agent.service.analysis.FactClassifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -58,6 +59,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private final IssueAuthorityRetrievalStrategy authorityQueryBuilder;
     private final AuthorityRetrievalService authorityRetrievalService;
     private final AuthoritySummarizer authoritySummarizer;
+    private final FactClassifier factClassifier;
 
     public CaseAnalysisModeHandler(
         RetrievalService retrievalService,
@@ -67,7 +69,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         CaseIssueExtractor issueExtractor,
         IssueAuthorityRetrievalStrategy authorityQueryBuilder,
         AuthorityRetrievalService authorityRetrievalService,
-        AuthoritySummarizer authoritySummarizer
+        AuthoritySummarizer authoritySummarizer,
+        FactClassifier factClassifier
     ) {
         this.retrievalService = retrievalService;
         this.contextBuilder = contextBuilder;
@@ -77,6 +80,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         this.authorityQueryBuilder = authorityQueryBuilder;
         this.authorityRetrievalService = authorityRetrievalService;
         this.authoritySummarizer = authoritySummarizer;
+        this.factClassifier = factClassifier;
     }
 
     @Override
@@ -1940,8 +1944,11 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                 allFavorableFacts.size(), truncateForLogging(element));
         }
         
+        // Apply fact classification BEFORE strict filter - exclude noisy/unrelated facts
+        List<CaseFact> classifiedFacts = filterFactsByClassification(allFavorableFacts);
+        
         // Apply strict quality filtering BEFORE rule-element assignment
-        for (CaseFact fact : allFavorableFacts) {
+        for (CaseFact fact : classifiedFacts) {
             if (isStrictlyHighQualityFact(fact)) {
                 acceptedByStrictFilter.add(fact);
             } else {
@@ -3025,5 +3032,38 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         }
         
         return false;
+    }
+    
+    /**
+     * Filter facts using FactClassifier - exclude NOISY_FACT and UNRELATED_FACT.
+     * This is part of the APPLICATION TO RULE path, called before strict filtering
+     * and assignment to rule elements.
+     * 
+     * @param facts Favorable facts to classify and filter
+     * @return Facts that are not noisy or unrelated
+     */
+    private List<CaseFact> filterFactsByClassification(List<CaseFact> facts) {
+        List<CaseFact> filtered = new ArrayList<>();
+        
+        for (CaseFact fact : facts) {
+            String description = fact.getDescription();
+            if (description == null || description.isEmpty()) {
+                continue;
+            }
+            
+            // Classify the fact
+            ClassifiedFact classified = factClassifier.classify(description);
+            FactCategory category = classified.getCategory();
+            
+            // Log classification with reason
+            logger.debug("[FACT_CLASSIFIER] category={} reason={}", category, classified.getReason());
+            
+            // Exclude noisy and unrelated facts
+            if (category != FactCategory.NOISY_FACT && category != FactCategory.UNRELATED_FACT) {
+                filtered.add(fact);
+            }
+        }
+        
+        return filtered;
     }
 }

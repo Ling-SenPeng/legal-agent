@@ -12,6 +12,7 @@ import com.agent.service.analysis.CaseAnalysisContextBuilder;
 import com.agent.service.analysis.CaseAnalysisQueryCleaner;
 import com.agent.service.analysis.CaseAnalysisRetrievalQueryBuilder;
 import com.agent.service.analysis.CaseIssueExtractor;
+import com.agent.service.analysis.FactClassifier;
 import com.agent.service.analysis.authority.IssueAuthorityRetrievalStrategy;
 import com.agent.service.analysis.authority.AuthorityRetrievalService;
 import com.agent.service.analysis.authority.AuthoritySummarizer;
@@ -52,6 +53,7 @@ class CaseAnalysisModeHandlerTest {
         var realAuthorityQueryBuilder = new com.agent.service.analysis.authority.RuleBasedIssueAuthorityRetrievalStrategy();
         var realAuthorityRetrievalService = new AuthorityRetrievalService(java.util.Optional.empty());
         var realAuthoritySummarizer = new AuthoritySummarizer();
+        var testFactClassifier = new TestFactClassifier();
         
         handler = new CaseAnalysisModeHandler(
             testRetrievalService, 
@@ -61,7 +63,8 @@ class CaseAnalysisModeHandlerTest {
             testIssueExtractor,
             realAuthorityQueryBuilder,
             realAuthorityRetrievalService,
-            realAuthoritySummarizer
+            realAuthoritySummarizer,
+            testFactClassifier
         );
     }
 
@@ -1895,6 +1898,13 @@ class CaseAnalysisModeHandlerTest {
     }
     
     // ==================== TEST DOUBLES ====================
+
+    /**
+     * Test double for FactClassifier - accepts all facts as valid (non-noisy, non-unrelated)
+     * for testing purposes. Actual classification logic is tested in FactClassifierTest.
+     */
+    static class TestFactClassifier extends FactClassifier {
+    }
 
     /**
      * Test double for RetrievalService - allows setting evidence chunks
