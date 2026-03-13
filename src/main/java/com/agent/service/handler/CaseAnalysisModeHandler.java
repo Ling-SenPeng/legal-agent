@@ -17,6 +17,7 @@ import com.agent.service.analysis.CaseAnalysisRetrievalQueryBuilder;
 import com.agent.service.analysis.CaseIssueExtractor;
 import com.agent.service.analysis.PropertyAwareCaseAnalysis;
 import com.agent.service.analysis.PropertyScopeDetector;
+import com.agent.service.analysis.PropertyAmbiguityHandler;
 import com.agent.service.analysis.authority.IssueAuthorityRetrievalStrategy;
 import com.agent.service.analysis.authority.AuthorityRetrievalService;
 import com.agent.service.analysis.authority.AuthoritySummarizer;
@@ -202,6 +203,39 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             
             // Store scope result for access during answer formatting
             currentPropertyScope.set(scopeResult);
+            
+            // ===== PROPERTY SCOPE GATE =====
+            
+            // Stop analysis if scope is ambiguous and query didn't specify a property
+            if (scopeResult.scope == PropertyScopeDetector.PropertyScope.AMBIGUOUS && 
+                !scopeResult.querySpecifiedProperty) {
+                
+                logger.info("[PROPERTY_SCOPE_GATE] scope=AMBIGUOUS querySpecifiedProperty=false action=STOP_MIXED_ANALYSIS");
+                
+                // Canonicalize properties for better reporting
+                List<String> canonical = PropertyAmbiguityHandler.canonicalizeProperties(
+                    scopeResult.candidateProperties
+                );
+                logger.info("[PROPERTY_CANONICALIZATION] raw={} canonical={}", 
+                    scopeResult.candidateProperties, canonical);
+                
+                // Generate safe ambiguity response
+                List<String> issueDescriptions = issues.stream()
+                    .map(CaseIssue::getDescription)
+                    .collect(Collectors.toList());
+                
+                String ambiguityResponse = PropertyAmbiguityHandler.generateAmbiguityResponse(
+                    issueDescriptions,
+                    canonical,
+                    canonical.isEmpty() ? null : canonical.get(0)
+                );
+                
+                return new ModeExecutionResult(
+                    TaskMode.CASE_ANALYSIS,
+                    ambiguityResponse,
+                    "Mode: CASE_ANALYSIS | Status: AMBIGUOUS_PROPERTY_SCOPE | Issues: " + issues.size()
+                );
+            }
             
             // ===== ANALYSIS PHASE =====
             

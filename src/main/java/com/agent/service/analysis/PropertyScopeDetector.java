@@ -61,14 +61,25 @@ public class PropertyScopeDetector {
         public final PropertyScope scope;
         public final String identifiedProperty;  // null if AMBIGUOUS
         public final List<String> candidateProperties;
+        public final List<String> canonicalProperties;  // Normalized duplicates removed
         public final String detectionReason;
+        public final boolean querySpecifiedProperty;  // true if query explicitly mentions a property
         
         public PropertyScopeResult(PropertyScope scope, String identifiedProperty, 
                                    List<String> candidateProperties, String reason) {
+            this(scope, identifiedProperty, candidateProperties, reason, false);
+        }
+        
+        public PropertyScopeResult(PropertyScope scope, String identifiedProperty, 
+                                   List<String> candidateProperties, String reason,
+                                   boolean querySpecifiedProperty) {
             this.scope = scope;
             this.identifiedProperty = identifiedProperty;
             this.candidateProperties = new ArrayList<>(candidateProperties);
+            this.canonicalProperties = com.agent.service.analysis.PropertyAmbiguityHandler
+                .canonicalizeProperties(candidateProperties);
             this.detectionReason = reason;
+            this.querySpecifiedProperty = querySpecifiedProperty;
         }
         
         @Override
@@ -109,7 +120,8 @@ public class PropertyScopeDetector {
                 PropertyScope.UNAMBIGUOUS,
                 queryCity,
                 new ArrayList<>(candidateProperties),
-                "City '" + queryCity + "' found in query"
+                "City '" + queryCity + "' found in query",
+                true  // Query specified property
             );
         }
         
@@ -120,7 +132,8 @@ public class PropertyScopeDetector {
                 PropertyScope.UNAMBIGUOUS,
                 "Loan#" + queryLoanNumber,
                 new ArrayList<>(candidateProperties),
-                "Loan number '" + queryLoanNumber + "' found in query"
+                "Loan number '" + queryLoanNumber + "' found in query",
+                true  // Query specified property
             );
         }
         
@@ -132,7 +145,8 @@ public class PropertyScopeDetector {
                 PropertyScope.AMBIGUOUS,
                 null,
                 new ArrayList<>(candidateProperties),
-                "Multiple properties (" + candidateProperties.size() + ") found but query does not specify which"
+                "Multiple properties (" + candidateProperties.size() + ") found but query does not specify which",
+                false  // Query did not specify property
             );
         }
         
@@ -145,7 +159,8 @@ public class PropertyScopeDetector {
                 PropertyScope.UNAMBIGUOUS,
                 singleProperty,
                 new ArrayList<>(candidateProperties),
-                "Only one property found in evidence"
+                "Only one property found in evidence",
+                false  // Query didn't specify (didn't need to)
             );
         }
         
@@ -155,7 +170,8 @@ public class PropertyScopeDetector {
             PropertyScope.UNAMBIGUOUS,
             null,
             new ArrayList<>(),
-            "No community properties detected in evidence"
+            "No community properties detected in evidence",
+            false  // No properties to specify
         );
     }
     
