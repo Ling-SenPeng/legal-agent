@@ -1042,72 +1042,219 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
 
     /**
      * Filter rule text to only mention authorities that are in the final rendered list.
-     * Removes references to authorities that were dropped during ranking.
+     * STRICT: Rule must mention ONLY final authorities, not contain stale citations.
      * 
      * @param originalRule Original rule text from authority summary
      * @param finalAuthorities Final authorities to keep references to
-     * @return Filtered rule text
+     * @return Filtered rule text, or regenerated rule if stale citations found
      */
     private String filterRuleToFinalAuthorities(String originalRule, List<LegalAuthority> finalAuthorities) {
         if (finalAuthorities.isEmpty() || originalRule == null) {
             return originalRule;
         }
         
-        // Collect titles and citations of final authorities
-        Set<String> finalTitles = new HashSet<>();
+        // Collect citations of final authorities for comparison
         Set<String> finalCitations = new HashSet<>();
+        Set<String> finalCitationsLower = new HashSet<>();
         
         for (LegalAuthority auth : finalAuthorities) {
-            finalTitles.add(auth.getTitle().toLowerCase());
-            finalCitations.add(auth.getCitation().toLowerCase());
-            // Also add just the name for case references like "Marriage of Epstein"
-            String[] parts = auth.getTitle().split(" ");
-            if (parts.length > 0) {
-                finalTitles.add(parts[parts.length - 1].toLowerCase());
-            }
+            finalCitations.add(auth.getCitation());
+            finalCitationsLower.add(auth.getCitation().toLowerCase());
         }
         
         if (logger.isDebugEnabled()) {
-            StringBuilder filterLog = new StringBuilder("\n[CASE_ANALYSIS_RULE_FILTER] Filtering rule text to match final authorities.\n");
-            filterLog.append("Final authority titles (for matching):\n");
-            for (String title : finalTitles) {
-                filterLog.append("  - ").append(title).append("\n");
-            }
-            filterLog.append("Final authority citations (for matching):\n");
+            StringBuilder filterLog = new StringBuilder("\n[CASE_ANALYSIS_RULE_FILTER] Strict citation filtering.\n");
+            filterLog.append("Final authority citations (comparison set):\n");
             for (String citation : finalCitations) {
                 filterLog.append("  - ").append(citation).append("\n");
             }
             logger.debug(filterLog.toString());
         }
         
-        // The original rule should already mention the final authorities
-        // If not, it was generated with different authorities
-        String ruleLower = originalRule.toLowerCase();
-        boolean mentionsFinalAuthority = finalTitles.stream()
-            .anyMatch(ruleLower::contains) ||
-            finalCitations.stream()
-            .anyMatch(ruleLower::contains);
+        // STRICT: Extract all citations mentioned in the rule text
+        Set<String> citedInRule = extractCitationsFromRuleText(originalRule);
         
         if (logger.isDebugEnabled()) {
-            logger.debug(String.format(
-                "\n[CASE_ANALYSIS_RULE_FILTER_RESULT] Rule mentions final authorities? %s\n",
-                mentionsFinalAuthority
-            ));
+            StringBuilder citedLog = new StringBuilder("Citations mentioned in original rule:\n");
+            if (citedInRule.isEmpty()) {
+                citedLog.append("  (none found)\n");
+            } else {
+                for (String cited : citedInRule) {
+                    citedLog.append("  - ").append(cited).append("\n");
+                }
+            }
+            logger.debug(citedLog.toString());
         }
         
-        if (mentionsFinalAuthority) {
-            if (logger.isDebugEnabled()) {
-                logger.debug("[CASE_ANALYSIS_RULE_FILTER] Decision: Rule MATCHES final authorities. Using original rule.");
+        // STRICT: Check if rule contains any citations NOT in final authority set
+        Set<String> staleCitations = new HashSet<>();
+        for (String ruleCitation : citedInRule) {
+            boolean foundInFinal = finalCitationsLower.stream()
+                .anyMatch(finalCit -> normalizeForComparison(finalCit)
+                    .contains(normalizeForComparison(ruleCitation)));
+            
+            if (!foundInFinal) {
+                staleCitations.add(ruleCitation);
             }
-            return originalRule;
-        } else {
-            // Rule doesn't match final authorities - create new rule from scratch
+        }
+        
+        if (logger.isDebugEnabled()) {
+            StringBuilder staleLog = new StringBuilder("Stale citations found (in rule but NOT in final authorities):\n");
+            if (staleCitations.isEmpty()) {
+                staleLog.append("  (none - rule is clean)\n");
+            } else {
+                for (String stale : staleCitations) {
+                    staleLog.append("  - ").append(stale).append("\n");
+                }
+            }
+            logger.debug(staleLog.toString());
+        }
+        
+        // Decision: If stale citations found, MUST regenerate
+        if (!staleCitations.isEmpty()) {
             if (logger.isDebugEnabled()) {
-                logger.debug("[CASE_ANALYSIS_RULE_FILTER] Decision: Rule DOES NOT MATCH final authorities. " +
-                    "Rule was generated with different authority set. Generating new rule from final authorities.");
+                logger.debug("[CASE_ANALYSIS_RULE_FILTER] Decision: REGENERATE - Rule contains stale citations " + staleCitations);
             }
             return createRuleFromFinalAuthorities(finalAuthorities);
         }
+        
+        // If rule mentions at least one final authority (by citation OR by name) and has no stale citations, reuse it
+        String ruleLower = originalRule.toLowerCase();
+        boolean mentionsAtLeastOneFinalAuthority = citedInRule.stream()
+            .anyMatch(ruleCit -> finalCitationsLower.stream()
+                .anyMatch(finalCit -> normalizeForComparison(finalCit)
+                    .contains(normalizeForComparison(ruleCit))))
+            || // Also check if rule mentions any authority by NAME (e.g., "Epstein", "Garcia")
+            finalAuthorities.stream()
+                .anyMatch(auth -> ruleLower.contains(auth.getTitle().toLowerCase().split("\\(")[0].trim()));
+        
+        if (mentionsAtLeastOneFinalAuthority) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("[CASE_ANALYSIS_RULE_FILTER] Decision: REUSE - Rule mentions final authorities (by citation or name) and has no stale citations.");
+            }
+            return originalRule;
+        } else {
+            // Rule doesn't mention any final authority at all
+            if (logger.isDebugEnabled()) {
+                logger.debug("[CASE_ANALYSIS_RULE_FILTER] Decision: REGENERATE - Rule mentions no final authorities.");
+            }
+            return createRuleFromFinalAuthorities(finalAuthorities);
+        }
+    }
+    
+    /**
+     * Extract all citations mentioned in rule text.
+     * Looks for patterns like: "191 Cal.App.3d 592", "28 Cal.4th 366", "Cal. Fam. Code § 750", etc.
+     * 
+     * @param ruleText Text to extract citations from
+     * @return Set of citation strings found in text
+     */
+    private Set<String> extractCitationsFromRuleText(String ruleText) {
+        Set<String> citations = new HashSet<>();
+        
+        if (ruleText == null || ruleText.isEmpty()) {
+            return citations;
+        }
+        
+        // Pattern: digits + Cal + digits (e.g., "191 Cal.App.3d 592", "28 Cal.4th 366")
+        // More specific to catch formats like "28 Cal.4th 366"
+        java.util.regex.Pattern reporterPattern = java.util.regex.Pattern
+            .compile("(\\d+\\s+Cal(?:\\.)?\\s*(?:App\\.?)?\\s*(?:\\w+\\.?)?\\s+\\d+\\s+\\d+)");
+        
+        java.util.regex.Matcher reporterMatcher = reporterPattern.matcher(ruleText);
+        while (reporterMatcher.find()) {
+            String match = reporterMatcher.group(1).trim();
+            if (!match.isEmpty()) {
+                citations.add(match);
+            }
+        }
+        
+        // Pattern for code sections: "California Family Code § 750", "Cal. Fam. Code § 750", etc.
+        // Match both abbreviated and full forms
+        java.util.regex.Pattern codePattern = java.util.regex.Pattern
+            .compile("((?:California|Cal\\.?)\\s+(?:Family\\s+)?(?:Fam\\.\\s+)?Code\\s+(?:§\\s*)?\\d+)");
+        
+        java.util.regex.Matcher codeMatcher = codePattern.matcher(ruleText);
+        while (codeMatcher.find()) {
+            String match = codeMatcher.group(1).trim();
+            if (!match.isEmpty()) {
+                citations.add(match);
+            }
+        }
+        
+        return citations;
+    }
+    
+    /**
+     * Find stale citations in rule text (citations not in final authorities).
+     * Looks for patterns like: "191 Cal.App.3d 592", "28 Cal.4th 366", "Cal. Fam. Code § 750", etc.
+     * 
+     * @param ruleText Text to extract citations from
+     * @param finalCitationsNormalized Set of normalized final authority citations
+     * @return Set of stale citation strings found in text but not in final authorities
+     */
+    private Set<String> findStaleCitationsInRule(String ruleText, Set<String> finalCitationsNormalized) {
+        Set<String> staleCitations = new HashSet<>();
+        
+        if (ruleText == null || ruleText.isEmpty() || finalCitationsNormalized.isEmpty()) {
+            return staleCitations;
+        }
+        
+        // Simple pattern: Look for "Cal.*" or "California" followed by citation-like text
+        // Pattern: digits + Cal + digits (e.g., "191 Cal.App.3d 592", "28 Cal.4th 366")
+        java.util.regex.Pattern reporterPattern = java.util.regex.Pattern
+            .compile("(\\d+\\s+Cal[\\w.]*\\s+\\d+\\s+\\d+)");
+        
+        java.util.regex.Matcher reporterMatcher = reporterPattern.matcher(ruleText);
+        while (reporterMatcher.find()) {
+            String citation = reporterMatcher.group(1).trim();
+            String normalized = normalizeForComparison(citation);
+            
+            // Check if this citation is in the final authorities (with fuzzy matching)
+            boolean foundInFinal = finalCitationsNormalized.stream()
+                .anyMatch(finalNorm -> finalNorm.contains(normalized) || normalized.contains(finalNorm) || 
+                    ruleText.toLowerCase().contains(normalizeForComparison(citation)));
+            
+            if (!foundInFinal) {
+                staleCitations.add(citation);
+            }
+        }
+        
+        // Pattern: "Cal. Fam. Code § [digits]" or "Cal. Code § [digits]"
+        java.util.regex.Pattern codePattern = java.util.regex.Pattern
+            .compile("(Cal[\\w.]*\\s+Code\\s+§\\s+\\d+)");
+        
+        java.util.regex.Matcher codeMatcher = codePattern.matcher(ruleText);
+        while (codeMatcher.find()) {
+            String citation = codeMatcher.group(1).trim();
+            String normalized = normalizeForComparison(citation);
+            
+            boolean foundInFinal = finalCitationsNormalized.stream()
+                .anyMatch(finalNorm -> finalNorm.contains(normalized) || normalized.contains(finalNorm));
+            
+            if (!foundInFinal) {
+                staleCitations.add(citation);
+            }
+        }
+        
+        return staleCitations;
+    }
+    
+    /**
+     * Normalize citation for comparison by removing spaces and periods.
+     * E.g., "Cal. Fam. Code § 750" → "calfamcode750"
+     * 
+     * @param citation Citation to normalize
+     * @return Normalized citation string
+     */
+    private String normalizeForComparison(String citation) {
+        if (citation == null) {
+            return "";
+        }
+        return citation.toLowerCase()
+            .replaceAll("\\s+", "")      // Remove spaces
+            .replaceAll("\\.", "")        // Remove periods  
+            .replaceAll("§", "");         // Remove section symbol
     }
 
     /**

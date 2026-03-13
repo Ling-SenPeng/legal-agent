@@ -1064,6 +1064,129 @@ class CaseAnalysisModeHandlerTest {
         }
     }
 
+    @Test
+    void testStrictCitationFilteringRemovesStaleCitations() {
+        // Given: Final authorities are Epstein + § 750, but the original rule contains stale Moore citation
+        String query = "post separation mortgage reimbursement";
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("Paid $25,000 in post-separation mortgage", true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        // Authority 1: Epstein (42 Cal.3d 120) - highest ranked
+        LegalAuthority epstein = new LegalAuthority(
+            "auth_epstein",
+            "Marriage of Epstein",
+            "191 Cal.App.3d 592",
+            AuthorityType.STATUTE,
+            "Case law",
+            "Epstein reimbursement analysis",
+            0.95
+        );
+        
+        // Authority 2: Family Code § 750 - second highest
+        LegalAuthority familyCodeSection = new LegalAuthority(
+            "auth_fam_750",
+            "California Family Code § 750",
+            "Cal. Fam. Code § 750",
+            AuthorityType.STATUTE,
+            "Statute",
+            "Reimbursement statute",
+            0.92
+        );
+        
+        // Authority 3: Moore (stale, will be dropped during ranking)
+        LegalAuthority moore = new LegalAuthority(
+            "auth_moore",
+            "Court's Opinion on reimbursement",
+            "28 Cal.4th 366",
+            AuthorityType.CASE_LAW,
+            "Case law",
+            "Generic Moore case",
+            0.65  // Lowest score, will be dropped
+        );
+        
+        // CRITICAL: Authority summary contains STALE rule text mentioning Moore (28 Cal.4th 366)
+        // even though Moore will not be in the final top-2 authorities
+        String staleRuleText = "Under Marriage of Epstein (191 Cal.App.3d 592) and Moore v. Court " +
+            "(28 Cal.4th 366), reimbursement is governed by California Family Code § 750. " +
+            "The Moore precedent established general principles that inform reimbursement analysis.";
+        
+        AuthoritySummary summary = new AuthoritySummary(
+            LegalIssueType.REIMBURSEMENT,
+            1,
+            staleRuleText,
+            List.of(epstein, familyCodeSection, moore)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query,
+            issues,
+            facts,
+            List.of(),
+            "Reimbursement analysis",
+            List.of(summary)
+        );
+        
+        EvidenceChunk chunk = createTestChunk(
+            "Post-separation mortgage payment issue",
+            1L, 1, "Page 1"
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(chunk));
+        testContextBuilder.setContext(context);
+        
+        // When: Execute CASE_ANALYSIS
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then: Verify stale citations are removed from LEGAL RULE
+        assertTrue(result.isSuccess(), "Execution should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer, "Answer should not be null");
+        
+        // Extract sections
+        int legalRuleIdx = answer.indexOf("LEGAL RULE");
+        int authoritiesIdx = answer.indexOf("RELEVANT AUTHORITIES");
+        int applicationIdx = answer.indexOf("APPLICATION");
+        
+        assertTrue(legalRuleIdx >= 0, "LEGAL RULE section must exist");
+        assertTrue(authoritiesIdx > legalRuleIdx, "RELEVANT AUTHORITIES must come after LEGAL RULE");
+        
+        String legalRuleSection = answer.substring(legalRuleIdx, authoritiesIdx);
+        String authoritiesSection = answer.substring(authoritiesIdx, applicationIdx);
+        
+        // CRITICAL: Verify that final RELEVANT AUTHORITIES shows only Epstein + § 750 (not Moore)
+        assertTrue(authoritiesSection.contains("Epstein"),
+            "RELEVANT AUTHORITIES must show Epstein");
+        assertTrue(authoritiesSection.contains("Cal. Fam. Code § 750"),
+            "RELEVANT AUTHORITIES must show Cal. Fam. Code § 750");
+        assertFalse(authoritiesSection.contains("28 Cal.4th 366"),
+            "RELEVANT AUTHORITIES must NOT show Moore (28 Cal.4th 366) - ranked below top 2");
+        
+        // CRITICAL: Verify LEGAL RULE does NOT contain the stale Moore citation
+        // The filter should detect that the original rule contains "28 Cal.4th 366" which is not
+        // in the final authorities, and regenerate the rule from scratch
+        assertFalse(legalRuleSection.contains("28 Cal.4th 366"),
+            "LEGAL RULE must NOT contain stale Moore citation (28 Cal.4th 366) - " +
+            "should regenerate rule when stale citations detected");
+        
+        assertFalse(legalRuleSection.contains("Moore"),
+            "LEGAL RULE must NOT reference Moore by name when Moore is not in final authorities");
+        
+        // VERIFY: LEGAL RULE should mention only authorities that are actually rendered
+        // Either it mentions Epstein/§750, or it's a generic fallback about legal principles
+        assertTrue(
+            legalRuleSection.contains("Epstein") || 
+            legalRuleSection.contains("Cal. Fam. Code") ||
+            legalRuleSection.toLowerCase().contains("principles"),  // Match both "legal principles" and "Legal principles"
+            "LEGAL RULE should reference only final authorities or use generic principle statement"
+        );
+    }
+
     // ==================== HELPER METHODS ====================
 
     private EvidenceChunk createTestChunk(String text, Long docId, Integer pageNo, String pageRef) {
