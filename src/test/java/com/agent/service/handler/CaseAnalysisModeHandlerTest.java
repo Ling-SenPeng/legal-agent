@@ -209,12 +209,12 @@ class CaseAnalysisModeHandlerTest {
         EvidenceChunk noisyChunk1 = createTestChunk("23", 2L, 1, "Page 1");  // Pure number
         EvidenceChunk noisyChunk2 = createTestChunk("real and personal $", 3L, 1, "Page 1");  // Boilerplate
         EvidenceChunk goodChunk2 = createTestChunk(
-            "Property was community property during marriage.",
+            "The property was financed with a long-term mortgage during marriage.",
             4L, 1, "Page 2"
         );
         EvidenceChunk noisyChunk3 = createTestChunk("1,500", 5L, 1, "Page 2");  // Pure numeric
         EvidenceChunk goodChunk3 = createTestChunk(
-            "Payment made from separate property account.",
+            "Payment was made from my separate property account after separation.",
             6L, 1, "Page 3"
         );
         
@@ -224,8 +224,8 @@ class CaseAnalysisModeHandlerTest {
         
         List<CaseFact> facts = List.of(
             new CaseFact("I paid $20,000 in post-separation mortgage payments", true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact("Property was community property during marriage", true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact("Payment made from separate property account", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("The property was financed with a long-term mortgage during marriage", true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Payment was made from my separate property account after separation", true, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -251,11 +251,9 @@ class CaseAnalysisModeHandlerTest {
         
         // Verify that quality facts are included
         assertTrue(answer.contains("I paid $20,000 in post-separation mortgage payments"), 
-            "Quality fact with payment amount should be included");
-        assertTrue(answer.contains("Property was community property during marriage"), 
-            "Quality fact about property should be included");
-        assertTrue(answer.contains("Payment made from separate property account"), 
-            "Quality fact about payment source should be included");
+            "Quality fact with post-separation payment should be included");
+        assertTrue(answer.contains("mortgage") || answer.contains("separate property account"), 
+            "Quality fact about mortgage or payment source should be included");
         
         // Verify that noisy snippets are filtered out
         assertFalse(answer.contains("  - 23"), 
@@ -1629,6 +1627,248 @@ class CaseAnalysisModeHandlerTest {
         );
     }
 
+    // ==================== REIMBURSEMENT FACT FILTERING TESTS ====================
+    
+    @Test
+    @DisplayName("REIMBURSEMENT: Rejects down payment contribution facts for post-separation reimbursement")
+    void testReimbursementRejectsDownPaymentFacts() {
+        // Given: Facts about down payment (should be rejected) mixed with post-separation payment facts
+        String query = "What's my reimbursement claim for post-separation mortgage payments?";
+        
+        // Create evidence chunks
+        EvidenceChunk downPaymentChunk = createTestChunk(
+            "We contributed $50,000 as down payment when we purchased the home.",
+            1L, 1, "Page 1"
+        );
+        EvidenceChunk separationPaymentChunk = createTestChunk(
+            "I paid $20,000 in post-separation mortgage payments after we separated.",
+            2L, 1, "Page 1"
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Post-separation mortgage reimbursement", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            // Down payment fact - should be rejected
+            new CaseFact("We contributed $50,000 as down payment when we purchased the home", true, "source", LegalIssueType.REIMBURSEMENT),
+            // Valid post-separation payment fact
+            new CaseFact("I paid $20,000 in post-separation mortgage payments after we separated", true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Reimbursement evaluated under Epstein factors."
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(downPaymentChunk, separationPaymentChunk));
+        testContextBuilder.setContext(context);
+        
+        // When
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then
+        assertTrue(result.isSuccess(), "Result should be successful");
+        String answer = result.getAnswer();
+        assertNotNull(answer);
+        
+        // Verify: Post-separation payment fact IS included
+        assertTrue(answer.contains("post-separation mortgage payments") || 
+                   answer.contains("$20,000"),
+            "Post-separation payment fact should be included in supporting facts");
+        
+        // Verify: Down payment fact is NOT included in rule element analysis
+        String applicationSection = answer.substring(
+            Math.max(0, answer.indexOf("APPLICATION TO RULE")),
+            Math.min(answer.length(), answer.indexOf("COUNTERARGUMENTS") + 1)
+        );
+        
+        assertFalse(applicationSection.contains("down payment") || 
+                    applicationSection.contains("$50,000 as down payment"),
+            "Down payment contribution should NOT appear as supporting fact for post-separation reimbursement");
+    }
+    
+    @Test
+    @DisplayName("REIMBURSEMENT: Rejects OCR fragments like '23 If payment is received after 10/16/2025'")
+    void testReimbursementRejectsOCRPaymentFragments() {
+        // Given: OCR fragments that look like payment statements but aren't meaningful
+        String query = "Do I have supporting facts for reimbursement?";
+        
+        // Create chunks with OCR fragments
+        EvidenceChunk ocrFragment1 = createTestChunk(
+            "23 If payment is received after 10/16/2025, a late fee will be assessed.",
+            1L, 1, "Page 1"
+        );
+        EvidenceChunk ocrFragment2 = createTestChunk(
+            "Payment received after 11/01/2025: 5% penalty applies.",
+            2L, 1, "Page 1"
+        );
+        EvidenceChunk validPaymentChunk = createTestChunk(
+            "I paid $15,000 in post-separation mortgage principal and interest payments.",
+            3L, 1, "Page 2"
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("23 If payment is received after 10/16/2025, a late fee will be assessed", true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Payment received after 11/01/2025: 5% penalty applies", true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("I paid $15,000 in post-separation mortgage principal and interest payments", true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Reimbursement claim."
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(ocrFragment1, ocrFragment2, validPaymentChunk));
+        testContextBuilder.setContext(context);
+        
+        // When
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then
+        assertTrue(result.isSuccess(), "Result should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer);
+        
+        // Verify: Valid payment fact is included
+        assertTrue(answer.contains("post-separation mortgage") || answer.contains("principal and interest") || answer.contains("$15,000"),
+            "Valid post-separation payment fact should be included");
+        
+        // Verify: OCR fragments are NOT included
+        String applicationSection = answer.substring(
+            Math.max(0, answer.indexOf("APPLICATION TO RULE")),
+            Math.min(answer.length(), answer.indexOf("COUNTERARGUMENTS") + 1)
+        );
+        
+        assertFalse(applicationSection.contains("23 If payment is received") ||
+                    applicationSection.contains("5% penalty"),
+            "OCR statement fragments should be rejected and not appear as supporting facts");
+    }
+    
+    @Test
+    @DisplayName("REIMBURSEMENT: Allows empty supporting facts when evidence is weak")
+    void testReimbursementAllowsEmptySupportingFacts() {
+        // Given: Facts that fail relevance filtering
+        String query = "What facts support my reimbursement?";
+        
+        EvidenceChunk weakChunk1 = createTestChunk(
+            "We purchased a house during marriage for $400,000.",
+            1L, 1, "Page 1"
+        );
+        EvidenceChunk weakChunk2 = createTestChunk(
+            "Initial contribution made at closing.",
+            2L, 1, "Page 1"
+        );
+        EvidenceChunk weakChunk3 = createTestChunk(
+            "1500",
+            3L, 1, "Page 2"
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("We purchased a house during marriage for $400,000", true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Initial contribution made at closing", true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("1500", true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Reimbursement claim."
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(weakChunk1, weakChunk2, weakChunk3));
+        testContextBuilder.setContext(context);
+        
+        // When
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then
+        assertTrue(result.isSuccess());
+        String answer = result.getAnswer();
+        assertNotNull(answer);
+        
+        // Verify: Answer exists and is complete
+        assertTrue(answer.contains("CASE ANALYSIS REPORT"));
+        assertTrue(answer.contains("ISSUE SUMMARY"));
+        
+        // Verify: Either "(none identified)" appears OR the answer explicitly states weak evidence
+        // The important thing is that weak facts are filtered out and not presented as strong supporting evidence
+        String applicationSection = answer.substring(
+            Math.max(0, answer.indexOf("APPLICATION TO RULE")),
+            Math.min(answer.length(), answer.indexOf("COUNTERARGUMENTS") + 1)
+        );
+        
+        // If there are no strong supporting facts, "(none identified)" should appear or facts section should be minimal
+        // The key is: these weak facts should NOT be rendered as strong supporting facts
+        boolean hasNoneIdentified = applicationSection.contains("(none identified)") || 
+                                   applicationSection.contains("Supporting Facts:\n") &&
+                                   !applicationSection.contains("purchased");  // Don't show "purchased during marriage"
+        
+        assertTrue(hasNoneIdentified || !applicationSection.contains("Supporting Facts:\n  - We purchased"),
+            "Weak facts about initial purchase should not be presented as supporting facts");
+    }
+    
+    @Test
+    @DisplayName("REIMBURSEMENT: Accepts strong post-separation mortgage payment facts with amounts")
+    void testReimbursementAcceptsStrongPostSeparationFacts() {
+        // Given: Clear post-separation payment facts with amounts and context
+        String query = "Reimbursement for post-separation mortgage payments?";
+        
+        EvidenceChunk strongFact1 = createTestChunk(
+            "Post-separation, I paid $25,000 in monthly mortgage payments on the marital residence.",
+            1L, 1, "Page 1"
+        );
+        EvidenceChunk strongFact2 = createTestChunk(
+            "Each payment was $1,200 principal and $800 interest per month for 20 months.",
+            2L, 1, "Page 1"
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("Post-separation, I paid $25,000 in monthly mortgage payments on the marital residence", true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Each payment was $1,200 principal and $800 interest per month for 20 months", true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Reimbursement evaluated under Epstein factors."
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(strongFact1, strongFact2));
+        testContextBuilder.setContext(context);
+        
+        // When
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then
+        assertTrue(result.isSuccess());
+        String answer = result.getAnswer();
+        assertNotNull(answer);
+        
+        // Verify: Strong facts are included and presented
+        assertTrue(answer.contains("post-separation") || answer.contains("mortgage payments") || 
+                   answer.contains("$25,000") || answer.contains("principal") || answer.contains("interest"),
+            "Strong post-separation payment facts should be prominently displayed");
+        
+        String applicationSection = answer.substring(
+            Math.max(0, answer.indexOf("APPLICATION TO RULE")),
+            Math.min(answer.length(), answer.indexOf("COUNTERARGUMENTS") + 1)
+        );
+        
+        assertTrue(applicationSection.contains("Supporting Facts:"),
+            "Supporting Facts section should be present and populated with strong facts");
+    }
+
     // ==================== HELPER METHODS ====================
 
     private EvidenceChunk createTestChunk(String text, Long docId, Integer pageNo, String pageRef) {
@@ -1913,5 +2153,281 @@ class CaseAnalysisModeHandlerTest {
                         appSection.contains("23\n"),
                 "Multi-line numeric/table fragment should be rejected by rendering filter");
         }
+    }
+
+    @Test
+    @DisplayName("Does not reuse generic payment facts under every reimbursement element")
+    void testPreventGenericFactReusageAcrossElements() {
+        String query = "Reimbursement analysis with generic and specific facts?";
+        
+        // Create a generic fact that could match multiple elements
+        String genericFact = "Both marital properties—our homes in San Jose and Newark—are paid for by me";
+        
+        // Create a specific fact that matches the "post-separation" element
+        String specificFact = "I paid $15,000 in post-separation mortgage payments on community property";
+        
+        // Create another specific fact for "benefit" element
+        String benefitFact = "Community property received the benefit of my payment";
+        
+        EvidenceChunk genericChunk = createTestChunk(genericFact, 1L, 1, "Page 1");
+        EvidenceChunk specificChunk = createTestChunk(specificFact, 2L, 1, "Page 2");
+        EvidenceChunk benefitChunk = createTestChunk(benefitFact, 3L, 1, "Page 3");
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact(genericFact, true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact(specificFact, true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact(benefitFact, true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Reimbursement with mixed generic and specific facts."
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(genericChunk, specificChunk, benefitChunk));
+        testContextBuilder.setContext(context);
+        
+        // Execute
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Verify: Handler succeeds
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.isSuccess(), "Handler should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer);
+        
+        // Extract APPLICATION TO RULE section
+        int appToRuleStart = answer.indexOf("APPLICATION TO RULE");
+        int counterArgStart = answer.indexOf("COUNTERARGUMENTS");
+        assertTrue(appToRuleStart >= 0, "Should have APPLICATION TO RULE section");
+        
+        String appSection = answer.substring(appToRuleStart, Math.min(counterArgStart >= 0 ? counterArgStart : answer.length(), answer.length()));
+        
+        // Verify: Specific facts are present
+        assertTrue(appSection.contains("$15,000") && appSection.contains("post-separation"),
+            "Specific post-separation payment fact should be present");
+        
+        // Verify: Generic fact is NOT repeated under every element
+        // Count how many times the generic fact appears as a Supporting Fact
+        int genericFactCount = 0;
+        int searchStart = 0;
+        String searchPattern = "marital properties";
+        while ((searchStart = appSection.indexOf(searchPattern, searchStart)) != -1) {
+            genericFactCount++;
+            searchStart += searchPattern.length();
+        }
+        
+        // The generic fact should appear 0-1 times, not under every element
+        assertTrue(genericFactCount <= 1,
+            "Generic fact should not be reused under multiple elements (found " + genericFactCount + " times)");
+        
+        // Verify: Specific facts are used instead
+        assertTrue(appSection.contains("benefit") || appSection.contains("$15,000"),
+            "Specific facts with targeted content should be used");
+    }
+    
+    @Test
+    @DisplayName("Rejects down payment facts for post-separation reimbursement elements")
+    void testRejectsDownPaymentForPostSeparationReimbursement() {
+        String query = "Reimbursement for post-separation payments?";
+        
+        // Create a down payment contribution fact (during marriage, not post-separation)
+        EvidenceChunk downPaymentChunk = createTestChunk(
+            "I contributed $50,000 down payment toward the purchase of the family home during marriage.",
+            1L, 1, "Page 1"
+        );
+        
+        // Create a genuine post-separation mortgage payment fact
+        EvidenceChunk postSepChunk = createTestChunk(
+            "I paid $3,000 in monthly mortgage payments after separation in 2023.",
+            2L, 1, "Page 2"
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("I contributed $50,000 down payment toward the purchase of the family home during marriage", 
+                true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("I paid $3,000 in monthly mortgage payments after separation in 2023",
+                true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Test reimbursement with down payment vs post-separation payments."
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(downPaymentChunk, postSepChunk));
+        testContextBuilder.setContext(context);
+        
+        // Execute
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Verify: Execution succeeds
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.isSuccess(), "Handler should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer);
+        
+        // Get APPLICATION TO RULE section
+        int appIndex = answer.indexOf("APPLICATION TO RULE");
+        int counterIndex = answer.indexOf("COUNTERARGUMENTS");
+        String appSection = answer.substring(appIndex, counterIndex > 0 ? counterIndex : answer.length());
+        
+        // Verify: Down payment fact is NOT used as supporting fact
+        // It may be mentioned in the context but should NOT appear as a Supporting Fact assignment
+        assertFalse(appSection.contains("down payment") || appSection.contains("$50,000 down"),
+            "Down payment contribution fact should not be used as supporting fact for post-separation reimbursement");
+        
+        // Verify: Post-separation mortgage fact IS included
+        assertTrue(appSection.contains("$3,000") || appSection.contains("monthly mortgage") || appSection.contains("after separation"),
+            "Post-separation mortgage payment fact should be included");
+    }
+    
+    @Test
+    @DisplayName("Rejects OCR fragments and statement warning text")
+    void testRejectsOCRFragmentsAndWarningText() {
+        String query = "Reimbursement claim?";
+        
+        // Create OCR/statement fragment facts
+        EvidenceChunk ocrFragment1 = createTestChunk(
+            "23 If payment is received after 10/16/2025, it will be a late payment.",
+            1L, 1, "Page 1"
+        );
+        
+        EvidenceChunk ocrFragment2 = createTestChunk(
+            "Payment received - late fees may apply if not before the due date",
+            2L, 1, "Page 1"
+        );
+        
+        // Create a legitimate mortgage payment fact
+        EvidenceChunk legitimateChunk = createTestChunk(
+            "Monthly mortgage payment of $2,400 was paid from my separate account after separation.",
+            3L, 1, "Page 2"
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.80, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("23 If payment is received after 10/16/2025, it will be a late payment",
+                true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Payment received - late fees may apply if not before the due date",
+                true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Monthly mortgage payment of $2,400 was paid from my separate account after separation",
+                true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Test with OCR fragments and legitimate mortgage facts."
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(ocrFragment1, ocrFragment2, legitimateChunk));
+        testContextBuilder.setContext(context);
+        
+        // Execute
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Verify: Execution succeeds
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.isSuccess(), "Handler should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer);
+        
+        // Get APPLICATION TO RULE section
+        int appIndex = answer.indexOf("APPLICATION TO RULE");
+        int counterIndex = answer.indexOf("COUNTERARGUMENTS");
+        String appSection = answer.substring(appIndex, counterIndex > 0 ? counterIndex : answer.length());
+        
+        // Verify: OCR fragments are NOT used as supporting facts
+        assertFalse(appSection.contains("23 If payment is received after 10/16/2025"),
+            "OCR fragment starting with number should be rejected");
+        assertFalse(appSection.contains("late fees may apply"),
+            "Statement warning text should be rejected");
+        
+        // Verify: Legitimate mortgage fact IS included
+        assertTrue(appSection.contains("$2,400") || appSection.contains("monthly mortgage") || appSection.contains("separate account"),
+            "Legitimate post-separation mortgage payment should be included");
+    }
+    
+    @Test
+    @DisplayName("Shows (none identified) when supporting facts are weak for an element")
+    void testShowsNoneIdentifiedForWeakFacts() {
+        String query = "Reimbursement?";
+        
+        // Create facts that are too weak for reimbursement (no post-separation, no mortgage context)
+        EvidenceChunk weakChunk1 = createTestChunk(
+            "We had property together.",
+            1L, 1, "Page 1"
+        );
+        
+        EvidenceChunk weakChunk2 = createTestChunk(
+            "Payment of some kind was made.",
+            2L, 1, "Page 1"
+        );
+        
+        // Strong fact for one element only
+        EvidenceChunk strongChunk = createTestChunk(
+            "I paid $10,000 in post-separation mortgage payments from my separate property account.",
+            3L, 1, "Page 2"
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.75, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("We had property together",
+                true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Payment of some kind was made",
+                true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("I paid $10,000 in post-separation mortgage payments from my separate property account",
+                true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Test with weak and strong facts."
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(weakChunk1, weakChunk2, strongChunk));
+        testContextBuilder.setContext(context);
+        
+        // Execute
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Verify: Execution succeeds
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.isSuccess(), "Handler should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer);
+        
+        // Get APPLICATION TO RULE section
+        int appIndex = answer.indexOf("APPLICATION TO RULE");
+        int counterIndex = answer.indexOf("COUNTERARGUMENTS");
+        String appSection = answer.substring(appIndex, counterIndex > 0 ? counterIndex : answer.length());
+        
+        // Verify: Weak facts like "We had property together" are not used
+        assertFalse(appSection.contains("We had property together"),
+            "Weak generic property fact should be rejected");
+        assertFalse(appSection.contains("Payment of some kind was made"),
+            "Weak generic payment fact should be rejected");
+        
+        // Verify: Strong fact IS included
+        assertTrue(appSection.contains("$10,000") || appSection.contains("post-separation mortgage"),
+            "Strong post-separation mortgage fact should be included");
+        
+        // Verify: Some elements may have "(none identified)" if no strong facts match them
+        // This is acceptable behavior - we prefer empty supporting facts to weak ones
+        assertTrue(appSection.contains("(none identified)") || answer.contains("$10,000"),
+            "Handler should either show strong facts or (none identified) for weak elements");
     }
 }

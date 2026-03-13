@@ -1915,11 +1915,12 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * Find facts that support a given rule element.
      * Matches facts based on keywords in the element description.
      * Applies strict quality filtering BEFORE keyword matching.
+     * Uses selective multi-keyword matching to avoid reusing generic facts across all elements.
      * 
      * @param element Rule element description
      * @param context Case analysis context
      * @param issueType Issue type for context
-     * @return List of supporting facts
+     * @return List of supporting facts (best matches only, not generic repeats)
      */
     private List<CaseFact> findSupportingFactsForElement(
         String element, CaseAnalysisContext context, LegalIssueType issueType
@@ -1966,33 +1967,518 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             logger.debug(rejectedLog.toString());
         }
         
-        // Now apply keyword matching on the filtered (high-quality) facts
-        String elementLower = element.toLowerCase();
-        
-        for (CaseFact fact : acceptedByStrictFilter) {
-            String factLower = fact.getDescription().toLowerCase();
-            
-            // Check for keyword overlap
-            if (elementLower.contains("payment") && factLower.contains("paid")) supportingFacts.add(fact);
-            else if (elementLower.contains("separate") && (factLower.contains("separate") || factLower.contains("personal"))) supportingFacts.add(fact);
-            else if (elementLower.contains("community") && factLower.contains("community")) supportingFacts.add(fact);
-            else if (elementLower.contains("marriage") && (factLower.contains("marriage") || factLower.contains("married"))) supportingFacts.add(fact);
-            else if (elementLower.contains("benefit") && factLower.contains("benefit")) supportingFacts.add(fact);
-            else if (elementLower.contains("acquired") && (factLower.contains("acquired") || factLower.contains("purchased"))) supportingFacts.add(fact);
-            else if (elementLower.contains("traced") && (factLower.contains("trace") || factLower.contains("source"))) supportingFacts.add(fact);
-            else if (elementLower.contains("need") && factLower.contains("need")) supportingFacts.add(fact);
-            else if (elementLower.contains("ability") && (factLower.contains("income") || factLower.contains("asset"))) supportingFacts.add(fact);
-            else if (elementLower.contains("custody") && factLower.contains("custody")) supportingFacts.add(fact);
-        }
+        // Apply selective keyword matching to avoid generic facts matching every element
+        supportingFacts = selectiveKeywordMatching(element, acceptedByStrictFilter, issueType);
         
         // Log keyword matching results
         if (logger.isDebugEnabled()) {
-            logger.debug("[STRICT_FILTER] Keyword matching: {} of {} accepted facts matched element keywords",
+            logger.debug("[STRICT_FILTER] Keyword matching: {} of {} accepted facts matched element keywords with selective criteria",
                 supportingFacts.size(), acceptedByStrictFilter.size());
         }
         
         // Keep at most 2 high-quality supporting facts per rule element
         return supportingFacts.stream().distinct().limit(2).toList();
+    }
+    
+    /**
+     * Perform selective keyword matching between rule element and facts.
+     * Uses multi-keyword matching to prefer specific matches over generic reuse.
+     * 
+     * Goal: Assign each fact to the best-matching element, not to every element.
+     * 
+     * @param element Rule element description
+     * @param facts Candidate facts to match
+     * @param issueType Issue type for context-aware matching
+     * @return Facts that strongly match this element
+     */
+    private List<CaseFact> selectiveKeywordMatching(String element, List<CaseFact> facts, LegalIssueType issueType) {
+        List<CaseFact> matched = new ArrayList<>();
+        String elementLower = element.toLowerCase();
+        
+        for (CaseFact fact : facts) {
+            String factDesc = fact.getDescription();
+            String factLower = factDesc.toLowerCase();
+            
+            // For REIMBURSEMENT issues, apply aggressive issue-specific filtering
+            if (issueType == LegalIssueType.REIMBURSEMENT) {
+                if (!isReimbursementRelevantFact(factDesc, elementLower)) {
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("[REIMBURSEMENT_FILTER] Rejected fact for element '{}': {} | reason=not_reimbursement_relevant",
+                            truncateForLogging(elementLower), truncateForLogging(factDesc));
+                    }
+                    continue;
+                }
+            }
+            
+            int matchScore = calculateElementMatchScore(elementLower, factLower, issueType);
+            
+            // For REIMBURSEMENT, require strong matches (score >= 2)
+            // For other issue types, accept meaningful matches (score >= 1)
+            int minScore = (issueType == LegalIssueType.REIMBURSEMENT) ? 2 : 1;
+            
+            if (matchScore >= minScore) {
+                matched.add(fact);
+                if (logger.isDebugEnabled()) {
+                    logger.debug("[ELEMENT_MATCH] Accepted fact for element '{}': {} | score={}",
+                        truncateForLogging(elementLower), truncateForLogging(factDesc), matchScore);
+                }
+            }
+        }
+        
+        return matched;
+    }
+    
+    /**
+     * Check if a fact is relevant to reimbursement claims.
+     * 
+     * AGGRESSIVE filtering for reimbursement facts to prevent weak/misleading associations.
+     * 
+     * Preferred keywords: post-separation, mortgage payment, paid by me, monthly payment, 
+     * loan number, due date, payment amount, principal/interest in readable payment statement
+     * 
+     * De-prioritizes/rejects:
+     * - down payment contribution facts
+     * - purchase contribution during marriage
+     * - general property acquisition background
+     * - unrelated employment/performance issues
+     * - OCR fragments / payment warning text without clear relevance
+     * 
+     * @param factDesc The fact description
+     * @param elementLower The lowercase rule element being matched
+     * @return true if fact is reimbursement-relevant, false otherwise
+     */
+    private boolean isReimbursementRelevantFact(String factDesc, String elementLower) {
+        if (factDesc == null || factDesc.isEmpty()) {
+            return false;
+        }
+        
+        String factLower = factDesc.toLowerCase();
+        
+        // === AGGRESSIVE REJECTION FILTERS ===
+        
+        // REJECT: Down payment / initial purchase contributions - NEVER relevant to post-separation reimbursement
+        // These are explicitly excluded from reimbursement rights under Epstein factors
+        if (isDownPaymentFact(factLower)) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("[REIMBURSEMENT_REJECT] Down payment fact rejected: {}", truncateForLogging(factDesc));
+            }
+            return false;
+        }
+        
+        // REJECT: OCR/statement fragments and form boilerplate
+        if (isOCROrFormFragment(factDesc, factLower)) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("[REIMBURSEMENT_REJECT] OCR/form fragment rejected: {}", truncateForLogging(factDesc));
+            }
+            return false;
+        }
+        
+        // REJECT: Noisy payment statement fragments without clear reimbursement context
+        if (isNoisyPaymentFragment(factDesc, factLower)) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("[REIMBURSEMENT_REJECT] Noisy payment fragment rejected: {}", truncateForLogging(factDesc));
+            }
+            return false;
+        }
+        
+        // REJECT: Employment/performance-related content (unrelated to payment reimbursement)
+        if ((factLower.contains("employment") || factLower.contains("performance") || factLower.contains("salary")) &&
+            !factLower.contains("pay") && !factLower.contains("paid") && !factLower.contains("payment")) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("[REIMBURSEMENT_REJECT] Employment-related fact rejected: {}", truncateForLogging(factDesc));
+            }
+            return false;
+        }
+        
+        // REJECT: General property acquisition background without post-separation context
+        if ((factLower.contains("purchased") || factLower.contains("acquired") || factLower.contains("bought")) &&
+            !factLower.contains("post-separation") && !factLower.contains("after separation") && 
+            !factLower.contains("paid") && !factLower.contains("payment") &&
+            !factLower.contains("mortgage") && !factLower.contains("loan")) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("[REIMBURSEMENT_REJECT] Property acquisition (no post-sep context) rejected: {}", truncateForLogging(factDesc));
+            }
+            return false;
+        }
+        
+        // === POSITIVE ACCEPTANCE WITH STRONG EVIDENCE ===
+        
+        // ACCEPT: Strong post-separation payment evidence
+        if (containsPostSeparationPaymentIndicators(factLower)) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("[REIMBURSEMENT_ACCEPT] Post-separation payment fact: {}", truncateForLogging(factDesc));
+            }
+            return true;
+        }
+        
+        // ACCEPT: Substantial mortgage/loan payment statements with amounts
+        if (containsSubstantialMortgagePaymentEvidence(factDesc, factLower)) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("[REIMBURSEMENT_ACCEPT] Mortgage payment statement: {}", truncateForLogging(factDesc));
+            }
+            return true;
+        }
+        
+        // ACCEPT: Clear first-person payment statements with monetary amounts
+        if (containsClearPaymentStatement(factDesc, factLower)) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("[REIMBURSEMENT_ACCEPT] Clear payment statement: {}", truncateForLogging(factDesc));
+            }
+            return true;
+        }
+        
+        // ACCEPT: Element-specific relevance (separate property funds, benefit analysis)
+        if (matchesElementSpecificRelevance(elementLower, factLower, factDesc)) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("[REIMBURSEMENT_ACCEPT] Element-specific fact: {}", truncateForLogging(factDesc));
+            }
+            return true;
+        }
+        
+        // REJECT: No strong reimbursement relevance found
+        if (logger.isDebugEnabled()) {
+            logger.debug("[REIMBURSEMENT_REJECT] No reimbursement relevance found: {}", truncateForLogging(factDesc));
+        }
+        return false;
+    }
+    
+    /**
+     * Detect down payment / initial purchase contribution facts.
+     * These are explicitly excluded from Epstein reimbursement remedies.
+     * 
+     * @param factLower Lowercase fact text
+     * @return true if this is a down payment/initial contribution fact
+     */
+    private boolean isDownPaymentFact(String factLower) {
+        // Direct down payment references
+        if (factLower.contains("down payment")) {
+            return true;
+        }
+        
+        // Initial contribution during marriage acquisition
+        if (factLower.contains("initial contribution") || 
+            factLower.contains("initial purchase") ||
+            factLower.contains("purchase contribution")) {
+            return true;
+        }
+        
+        // Purchase price context without post-separation payment context
+        if ((factLower.contains("purchase price") || factLower.contains("purchase amount")) &&
+            !factLower.contains("post-separation") && !factLower.contains("after separation") &&
+            !factLower.contains("paid") && !factLower.contains("payment")) {
+            return true;
+        }
+        
+        // "Purchased for $X" or similar acquisition statements without post-separation context
+        if ((factLower.matches(".*purchased\\s+for\\s+\\$.*") || factLower.matches(".*acquisition\\s+cost.*")) &&
+            !factLower.contains("post-separation") && !factLower.contains("after separation")) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Detect OCR fragments and form boilerplate that shouldn't be facts.
+     * 
+     * @param factDesc Original fact description
+     * @param factLower Lowercase fact text
+     * @return true if this is OCR/form boilerplate garbage
+     */
+    private boolean isOCROrFormFragment(String factDesc, String factLower) {
+        // Pattern: "[digit(s)] If payment received after [date]" - common OCR fragment
+        if (factLower.matches("^\\d+\\s+if\\s+payment.*") ||
+            factLower.matches(".*if\\s+payment\\s+is\\s+received\\s+after\\s+\\d+/\\d+/\\d+.*")) {
+            return true;
+        }
+        
+        // Isolated table headers without payment context
+        if (factDesc.length() < 20 &&
+            (factLower.matches("^(date\\s+paid|received|description|principal|interest|escrow|loan|balance)$") ||
+             factLower.matches("^\\w+\\s*:\\s*$") ||
+             factLower.matches("^[a-z]\\.\\s*$") ||
+             factLower.matches("^\\([a-z]\\)\\s*$"))) {
+            return true;
+        }
+        
+        // Form boilerplate
+        if (factLower.contains("real and personal") ||
+            factLower.contains("check the box") ||
+            factLower.startsWith("petitioner") ||
+            factLower.startsWith("respondent") ||
+            factLower.startsWith("attorney") ||
+            factLower.contains("court order") && factLower.length() < 20) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Detect noisy payment statement fragments that lack clear relevance.
+     * Examples: isolated amounts, payment conditions without context, warning text.
+     * 
+     * @param factDesc Original fact description
+     * @param factLower Lowercase fact text
+     * @return true if this is a noisy fragment
+     */
+    private boolean isNoisyPaymentFragment(String factDesc, String factLower) {
+        // Pure numeric or mostly numeric (amounts without context)
+        String noWhitespace = factDesc.replaceAll("\\s+", "");
+        if (noWhitespace.matches("^[0-9,.$]+$")) {
+            return true;  // e.g., "23" or "1,500.00"
+        }
+        
+        // Conditional payment text without substance ("If X happens then...")
+        if (factLower.matches(".*if\\s+(payment|the).*then.*") ||
+            factLower.matches(".*unless\\s+.*was\\s+(paid|received).*")) {
+            return true;
+        }
+        
+        // Isolated rate/percentage without context (e.g., "4.5%", "7% per annum")
+        if (factLower.matches("^\\s*(\\d+\\.?\\d*)\\s*%\\s*.*$") && 
+            !factLower.contains("interest") && !factLower.contains("payment")) {
+            return true;
+        }
+        
+        // Payment warning/instruction text without substance
+        if ((factLower.contains("payment") && (factLower.contains("warning") || factLower.contains("late") || 
+                                               factLower.contains("overdue") || factLower.contains("penalty"))) &&
+            factDesc.length() < 30) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Check if fact contains strong post-separation payment indicators.
+     * 
+     * @param factLower Lowercase fact text
+     * @return true if contains explicit post-separation payment evidence
+     */
+    private boolean containsPostSeparationPaymentIndicators(String factLower) {
+        // Strong post-separation payment keywords
+        if (factLower.contains("post-separation") || factLower.contains("after separation") ||
+            factLower.contains("following separation") || factLower.contains("subsequent to separation")) {
+            
+            // Must also indicate payment/mortgage context
+            return (factLower.contains("paid") || factLower.contains("payment") || 
+                    factLower.contains("mortgage") || factLower.contains("loan") ||
+                    factLower.contains("principal") || factLower.contains("interest"));
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Check if fact contains substantial mortgage/loan payment evidence with amounts.
+     * 
+     * @param factDesc Original fact description
+     * @param factLower Lowercase fact text
+     * @return true if is substantial mortgage payment statement
+     */
+    private boolean containsSubstantialMortgagePaymentEvidence(String factDesc, String factLower) {
+        // Mortgage/loan payments with amounts and payment frequency
+        boolean hasMortgageContext = (factLower.contains("mortgage") || factLower.contains("loan")) &&
+            (factLower.contains("paid") || factLower.contains("payment"));
+        
+        if (!hasMortgageContext) {
+            return false;
+        }
+        
+        // Must have amount indication
+        boolean hasAmount = factDesc.contains("$") || 
+            factLower.matches(".*\\b\\d+(?:,\\d{3})*(?:\\.\\d{2})?\\b.*");
+        
+        // Must be substantial (20+ characters for context)
+        boolean isSubstantial = factDesc.length() >= 20;
+        
+        // Must have payment components (principal, interest, monthly, etc.)
+        boolean hasPaymentContext = factLower.contains("principal") || factLower.contains("interest") ||
+            factLower.contains("monthly") || factLower.contains("payment amount") ||
+            factLower.contains("due date");
+        
+        return hasAmount && isSubstantial && (hasPaymentContext || factLower.contains("mortgage payment"));
+    }
+    
+    /**
+     * Check if fact is a clear first-person payment statement with amounts.
+     * 
+     * @param factDesc Original fact description
+     * @param factLower Lowercase fact text
+     * @return true if is clear payment statement
+     */
+    private boolean containsClearPaymentStatement(String factDesc, String factLower) {
+        // First-person payment indicators
+        boolean isFirstPersonPayment = (factLower.contains("i paid") || factLower.contains("i have paid") ||
+                                        factLower.contains("we paid") || factLower.contains("my payment")) ||
+            (factLower.contains("paid") && (factLower.contains("by me") || factLower.contains("from my")));
+        
+        if (!isFirstPersonPayment) {
+            return false;
+        }
+        
+        // Must have monetary amount
+        if (!factDesc.contains("$")) {
+            return false;
+        }
+        
+        // Must have mortgage/loan context
+        if (!(factLower.contains("mortgage") || factLower.contains("loan") || 
+              factLower.contains("principal") || factLower.contains("property"))) {
+            return false;
+        }
+        
+        // Must be substantial (20+ characters)
+        return factDesc.length() >= 20;
+    }
+    
+    /**
+     * Check for element-specific reimbursement fact relevance.
+     * 
+     * @param elementLower Lowercase rule element
+     * @param factLower Lowercase fact text
+     * @param factDesc Original fact description
+     * @return true if fact matches this specific element
+     */
+    private boolean matchesElementSpecificRelevance(String elementLower, String factLower, String factDesc) {
+        // "Separate property funds" element
+        if (elementLower.contains("separate property") || elementLower.contains("separate property funds")) {
+            if (factLower.contains("separate") && 
+                (factLower.contains("account") || factLower.contains("fund") || 
+                 factLower.contains("property") || factLower.contains("source"))) {
+                return factDesc.length() >= 20;  // Require substantial statement
+            }
+        }
+        
+        // "Benefit to community" element
+        if (elementLower.contains("benefit") && elementLower.contains("community")) {
+            if (factLower.contains("community") && 
+                (factLower.contains("benefit") || factLower.contains("property") || 
+                 factLower.contains("mortgaged") || factLower.contains("valued"))) {
+                return factDesc.length() >= 20;
+            }
+        }
+        
+        // Direct property characterization for community property context
+        if (factLower.contains("community property") && factDesc.length() >= 20 &&
+            !factLower.contains("separate property")) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Calculate how well a fact matches a specific rule element.
+     * Higher score = stronger match = fact is specific to this element.
+     * 
+     * @param elementLower Lowercase element description
+     * @param factLower Lowercase fact text
+     * @param issueType The legal issue type
+     * @return Match score (0 = no match, 1 = weak, 2+ = strong match)
+     */
+    private int calculateElementMatchScore(String elementLower, String factLower, LegalIssueType issueType) {
+        int score = 0;
+        
+        if (issueType == LegalIssueType.REIMBURSEMENT) {
+            // Element: "Post-separation payment was made..."
+            if (elementLower.contains("post-separation")) {
+                // Require explicit post-separation evidence
+                if (factLower.contains("post-separation") || factLower.contains("after separation") || factLower.contains("following separation")) {
+                    score += 2;  // Strong match - fact explicitly mentions post-separation
+                }
+                // Reject generic payment keywords without post-separation context
+            }
+            // Element: "payment was made with separate property funds"
+            else if (elementLower.contains("separate property funds") || elementLower.contains("separate property")) {
+                if (factLower.contains("separate") && (factLower.contains("property") || factLower.contains("fund") || factLower.contains("account"))) {
+                    score += 2;  // Strong - mentions separate AND property/funds/account
+                }
+            }
+            // Element: "payment provided benefit to community"
+            else if (elementLower.contains("benefit") && elementLower.contains("community")) {
+                if (factLower.contains("benefit") && factLower.contains("community")) {
+                    score += 2;  // Strong - mentions both benefit and community
+                }
+            }
+            // Element: "No offset or benefit received"
+            else if (elementLower.contains("offset") || elementLower.contains("no benefit")) {
+                if (factLower.contains("offset") || (factLower.contains("received") && factLower.contains("benefit"))) {
+                    score += 2;  // Strong - has offset/benefit logic
+                }
+            }
+            // Generic payment element match
+            else if (elementLower.contains("payment")) {
+                // Require substantial context for payment facts
+                if (factLower.contains("mortgage") && (factLower.contains("paid") || factLower.contains("payment"))) {
+                    score += 2;  // Strong - mortgage payment
+                } else if (factLower.contains("principal") || factLower.contains("interest")) {
+                    score += 2;  // Strong - payment components
+                }
+                // Reject pure "paid" or "payment" without context
+            }
+        }
+        else if (issueType == LegalIssueType.PROPERTY_CHARACTERIZATION) {
+            if (elementLower.contains("acquired")) {
+                if (factLower.contains("acquired") || factLower.contains("purchased")) {
+                    score += 2;
+                }
+            } else if (elementLower.contains("source")) {
+                if (factLower.contains("source") || factLower.contains("trace") || factLower.contains("fund source")) {
+                    score += 2;
+                } else if (factLower.contains("separate") || factLower.contains("community")) {
+                    score += 1;
+                }
+            } else if (elementLower.contains("transmutation")) {
+                if (factLower.contains("transmutation")) {
+                    score += 2;
+                }
+            } else if (elementLower.contains("property")) {
+                if ((factLower.contains("property") && (factLower.contains("separate") || factLower.contains("community")))) {
+                    score += 2;  // Strong - property + characterization
+                } else if (factLower.contains("property")) {
+                    score += 1;  // Weak - just property
+                }
+            }
+        }
+        else if (issueType == LegalIssueType.CUSTODY) {
+            if (elementLower.contains("best interest")) {
+                if (factLower.contains("best interest") || factLower.contains("child") || factLower.contains("welfare")) {
+                    score += 2;
+                }
+            } else if (elementLower.contains("jurisdiction")) {
+                if (factLower.contains("jurisdiction") || factLower.contains("custody")) {
+                    score += 2;
+                }
+            } else if (elementLower.contains("custody") || elementLower.contains("child")) {
+                if (factLower.contains("custody") || (factLower.contains("child") && (factLower.contains("care") || factLower.contains("custody")))) {
+                    score += 2;
+                } else if (factLower.contains("child")) {
+                    score += 1;
+                }
+            }
+        }
+        else if (issueType == LegalIssueType.SUPPORT) {
+            if (elementLower.contains("ability")) {
+                if (factLower.contains("income") || factLower.contains("earning")) {
+                    score += 2;
+                } else if (factLower.contains("ability")) {
+                    score += 2;
+                }
+            } else if (elementLower.contains("need")) {
+                if (factLower.contains("need") || factLower.contains("expense") || factLower.contains("financial")) {
+                    score += 2;
+                }
+            } else if (elementLower.contains("married")) {
+                if (factLower.contains("marriage") || factLower.contains("married")) {
+                    score += 2;
+                }
+            }
+        }
+        
+        return score;
     }
     
     /**
@@ -2134,7 +2620,13 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             }
         }
         
-        // Rejection 2: Pure numeric or mostly numeric
+        // Early rejection: Clear OCR/statement fragments before other checks
+        if (isOCRStatementFragment(desc, descLower)) {
+            logFactFilter(desc, false, "OCR statement fragment with conditional/warning text");
+            return false;
+        }
+        
+        // Pure numeric or mostly numeric
         String noWhitespace = desc_trimmed.replaceAll("\\s+", "");
         long numericChars = noWhitespace.chars()
             .filter(c -> Character.isDigit(c) || c == ',' || c == '.' || c == '$')
@@ -2194,6 +2686,46 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         }
         
         logFactFilter(desc, false, "failed all acceptance criteria");
+        return false;
+    }
+    
+    /**
+     * Detect OCR statement fragments with conditional/warning text.
+     * Examples: "23 If payment is received after 10/16/2025..."
+     * These are common OCR extraction artifacts from mortgage payment statements.
+     * 
+     * @param desc Original description
+     * @param descLower Lowercase description
+     * @return true if this appears to be an OCR statement fragment
+     */
+    private boolean isOCRStatementFragment(String desc, String descLower) {
+        // Pattern: digit(s) followed by conditional statement
+        // e.g. "23 If payment is received after..."
+        if (descLower.matches("^\\d+\\s+if\\s+(payment|the|you|this).*")) {
+            return true;
+        }
+        
+        // Pattern: Payment received after date with no other context
+        if (descLower.matches(".*if\\s+payment\\s+(is\\s+)?received\\s+after\\s+\\d{1,2}/\\d{1,2}/\\d{4}.*") &&
+            desc.length() < 60) {
+            return true;
+        }
+        
+        // Pattern: "X If payment..." where X is a document number or OCR artifact
+        if (descLower.matches("^[a-z0-9]+\\s+if\\s+payment.*") && 
+            !descLower.contains("mortgage") && !descLower.contains("loan")) {
+            return true;
+        }
+        
+        // Warning/instruction text that looks like OCR extraction
+        if ((descLower.contains("if payment") || descLower.contains("payment received")) &&
+            (descLower.contains("after") || descLower.contains("before") || 
+             descLower.contains("penalty") || descLower.contains("late")) &&
+            desc.length() < 80 && !descLower.contains("mortgage")) {
+            // This looks like conditional payment text without substantive content
+            return true;
+        }
+        
         return false;
     }
     
