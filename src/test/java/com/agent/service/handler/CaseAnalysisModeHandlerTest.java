@@ -457,9 +457,9 @@ class CaseAnalysisModeHandlerTest {
         
         // Extract RELEVANT AUTHORITIES section (between its header and next section)
         int relevantAuthStartIdx = answer.indexOf("RELEVANT AUTHORITIES");
-        int ruleSummaryStartIdx = answer.indexOf("RELEVANT AUTHORITIES & RULE SUMMARY");
-        if (relevantAuthStartIdx != -1 && ruleSummaryStartIdx != -1) {
-            String relevantAuthSection = answer.substring(relevantAuthStartIdx, ruleSummaryStartIdx);
+        int applicationStartIdx = answer.indexOf("APPLICATION");
+        if (relevantAuthStartIdx != -1 && applicationStartIdx != -1) {
+            String relevantAuthSection = answer.substring(relevantAuthStartIdx, applicationStartIdx);
             
             // Count how many authority citations appear in main section
             int citationCount = 0;
@@ -559,8 +559,8 @@ class CaseAnalysisModeHandlerTest {
         // Verify both sections exist
         assertTrue(answer.contains("RELEVANT AUTHORITIES"),
             "Should contain RELEVANT AUTHORITIES section");
-        assertTrue(answer.contains("RELEVANT AUTHORITIES & RULE SUMMARY"),
-            "Should contain RELEVANT AUTHORITIES & RULE SUMMARY section");
+        assertTrue(answer.contains("LEGAL RULE"),
+            "Should contain LEGAL RULE section (integrated from authority summaries)");
         
         // The key test: Epstein should appear before or instead of Moore in the main section
         int epsteinStartIdx = answer.indexOf("Epstein");
@@ -578,10 +578,10 @@ class CaseAnalysisModeHandlerTest {
         
         // Verify the top authorities in RELEVANT AUTHORITIES section are good matches
         int relevantAuthStartIdx = answer.indexOf("RELEVANT AUTHORITIES\n---");
-        int ruleSummaryStartIdx = answer.indexOf("RELEVANT AUTHORITIES & RULE SUMMARY");
+        int applicationStartIdx = answer.indexOf("APPLICATION");
         
-        if (relevantAuthStartIdx > -1 && ruleSummaryStartIdx > -1) {
-            String relevantAuthSection = answer.substring(relevantAuthStartIdx, ruleSummaryStartIdx);
+        if (relevantAuthStartIdx > -1 && applicationStartIdx > -1) {
+            String relevantAuthSection = answer.substring(relevantAuthStartIdx, applicationStartIdx);
             
             // The main section should prefer Epstein over Moore
             // Count the authorities shown in the main section (should be limited to 2-3)
@@ -853,6 +853,100 @@ class CaseAnalysisModeHandlerTest {
                     "CORRECT: Moore excluded from visible output due to 2-authority display limit");
             }
         }
+    }
+
+    @Test
+    void testLegalRuleAppearsBeforeApplicationInIRACStructure() {
+        // This test verifies that the new IRAC structure integrates authority summaries
+        // as the LEGAL RULE section that appears before APPLICATION.
+        // 
+        // Expected order: ISSUE SUMMARY → LEGAL RULE → RELEVANT AUTHORITIES → APPLICATION
+        
+        String query = "post separation mortgage reimbursement claim";
+        
+        // Create a reimbursement authority
+        LegalAuthority epstein = new LegalAuthority(
+            "epstein_1979",
+            "Marriage of Epstein",
+            "42 Cal.3d 120 (1979)",
+            AuthorityType.CASE_LAW,
+            "court_case",
+            "Establishes reimbursement principles for post-separation payments.",
+            0.85
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement claim", 0.90, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("Paid $20,000 in post-separation mortgage payments", 
+                        true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        // Create authority summary with clear rule text
+        String ruleText = "Under Marriage of Epstein, a spouse who makes separate property payments " +
+                         "for community property obligations after separation may seek reimbursement " +
+                         "from the community estate.";
+        
+        AuthoritySummary mockSummary = new AuthoritySummary(
+            LegalIssueType.REIMBURSEMENT,
+            1,
+            ruleText,
+            List.of(epstein)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query,
+            issues,
+            facts,
+            List.of(),
+            "Reimbursement analysis",
+            List.of(mockSummary)
+        );
+        
+        EvidenceChunk chunk = createTestChunk(
+            "Post-separation mortgage payment for community property.",
+            1L, 1, "Page 1"
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(chunk));
+        testContextBuilder.setContext(context);
+        
+        // When
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then: Verify IRAC structure with integrated LEGAL RULE
+        assertTrue(result.isSuccess(), "Execution should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer, "Answer should not be null");
+        
+        // CRITICAL: Verify LEGAL RULE section appears and contains the rule text
+        assertTrue(answer.contains("LEGAL RULE"),
+            "Output must contain LEGAL RULE section");
+        assertTrue(answer.contains("Epstein"),
+            "LEGAL RULE should reference Epstein authority");
+        assertTrue(answer.contains("reimbursement"),
+            "LEGAL RULE should contain reimbursement principle");
+        
+        // CRITICAL: Verify structure ordering - LEGAL RULE before APPLICATION
+        int legalRuleIdx = answer.indexOf("LEGAL RULE");
+        int applicationIdx = answer.indexOf("APPLICATION");
+        
+        assertTrue(legalRuleIdx > 0,
+            "LEGAL RULE section must appear in output");
+        assertTrue(applicationIdx > 0,
+            "APPLICATION section must appear in output");
+        assertTrue(legalRuleIdx < applicationIdx,
+            "CRITICAL: LEGAL RULE (contains authority summaries) must appear BEFORE APPLICATION " +
+            "in IRAC structure. This ensures authority-based rule precedes case fact application.");
+        
+        // Verify rule text is in the LEGAL RULE section, not ApplicationIndex
+        String beforeApplication = answer.substring(0, applicationIdx);
+        assertTrue(beforeApplication.contains("Epstein"),
+            "Authority reference must appear before APPLICATION section");
+        assertTrue(beforeApplication.contains("LEGAL RULE"),
+            "LEGAL RULE section header must appear before APPLICATION");
     }
     
 

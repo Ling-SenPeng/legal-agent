@@ -777,21 +777,19 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             answer.append("\n");
         }
         
-        answer.append("APPLICABLE LEGAL STANDARDS\n");
+        // NEW: LEGAL RULE section integrated from authority summaries
+        answer.append("LEGAL RULE\n");
         answer.append("---\n");
-        answer.append(context.getLegalStandardSummary()).append("\n\n");
+        appendLegalRuleSection(answer, context);
+        answer.append("\n");
         
         // Collect all unique authorities for deduplication across sections
         Set<String> renderedAuthorityIds = new LinkedHashSet<>();
         
-        // NEW: Simple, flat Relevant Authorities section (top 2-3 unique authorities)
+        // RELEVANT AUTHORITIES section moved after LEGAL RULE
         answer.append("RELEVANT AUTHORITIES\n");
         answer.append("---\n");
         appendRelevantAuthoritiesSection(answer, context, renderedAuthorityIds);
-        
-        answer.append("RELEVANT AUTHORITIES & RULE SUMMARY\n");
-        answer.append("---\n");
-        appendRulesSummarySection(answer, context, renderedAuthorityIds);
         
         answer.append("APPLICATION SUMMARY\n");
         answer.append("---\n");
@@ -856,6 +854,29 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         answer.append("Consult with legal counsel for definitive advice.\n");
         
         return answer.toString();
+    }
+
+    /**
+     * Append the LEGAL RULE section using authority summaries.
+     * Integrates authority summaries as the rule section of the IRAC structure,
+     * directly connecting legal authorities to the analysis reasoning.
+     * 
+     * @param answer StringBuilder to append to
+     * @param context Case analysis context containing authority summaries
+     */
+    private void appendLegalRuleSection(StringBuilder answer, CaseAnalysisContext context) {
+        if (context.getAuthoritySummaries().isEmpty()) {
+            answer.append("No specific legal authorities retrieved for analysis.\n");
+        } else {
+            boolean first = true;
+            for (AuthoritySummary summary : context.getAuthoritySummaries()) {
+                if (!first) {
+                    answer.append("\n");
+                }
+                answer.append(summary.getSummarizedRule());
+                first = false;
+            }
+        }
     }
 
     /**
