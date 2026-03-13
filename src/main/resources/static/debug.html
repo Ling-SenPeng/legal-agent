@@ -470,7 +470,7 @@
 
                 <div class="button-group">
                     <button class="btn-primary" id="runQueryBtn" onclick="runQuery()">Run Query</button>
-                    <button class="btn-secondary" onclick="copyCurl()" title="Copy curl command to clipboard">
+                    <button class="btn-secondary" onclick="copyCurl(this)" title="Copy curl command to clipboard">
                         📋 Copy curl
                     </button>
                 </div>
@@ -503,11 +503,11 @@
                     </div>
 
                     <div class="tabs">
-                        <button class="tab-button active" onclick="switchTab('answer')">Answer</button>
-                        <button class="tab-button" onclick="switchTab('evidence')">
+                        <button class="tab-button active" onclick="switchTab('answer', this)">Answer</button>
+                        <button class="tab-button" onclick="switchTab('evidence', this)">
                             Evidence <span id="evidenceCount" class="evidence-count">0</span>
                         </button>
-                        <button class="tab-button" onclick="switchTab('raw')">Raw JSON</button>
+                        <button class="tab-button" onclick="switchTab('raw', this)">Raw JSON</button>
                     </div>
 
                     <div id="answerTab" class="response-section active">
@@ -754,7 +754,7 @@
             emptyState.style.display = 'block';
         }
 
-        function switchTab(tabName) {
+        function switchTab(tabName, buttonElement) {
             // Hide all
             document.querySelectorAll('.response-section').forEach(section => {
                 section.classList.remove('active');
@@ -772,11 +772,22 @@
                 tab.classList.add('active');
             }
 
-            // Activate button
-            event.target.classList.add('active');
+            // Activate button - if not provided, find it by searching for the corresponding tab
+            if (!buttonElement) {
+                // Find the button that opens this tab by index
+                const buttons = document.querySelectorAll('.tab-button');
+                const tabMap = { 'answer': 0, 'evidence': 1, 'raw': 2 };
+                if (tabMap[tabName] !== undefined) {
+                    buttonElement = buttons[tabMap[tabName]];
+                }
+            }
+
+            if (buttonElement) {
+                buttonElement.classList.add('active');
+            }
         }
 
-        function copyCurl() {
+        function copyCurl(button) {
             const apiBaseUrl = document.getElementById('apiBaseUrl').value.trim();
             const question = document.getElementById('question').value.trim();
             const topK = parseInt(document.getElementById('topK').value);
@@ -799,12 +810,13 @@
   -d '${requestBody.replace(/'/g, "'\\''")}'`;
 
             navigator.clipboard.writeText(curlCommand).then(() => {
-                const btn = event.target;
-                const originalText = btn.textContent;
-                btn.textContent = '✓ Copied!';
-                setTimeout(() => {
-                    btn.textContent = originalText;
-                }, 2000);
+                if (button) {
+                    const originalText = button.textContent;
+                    button.textContent = '✓ Copied!';
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                    }, 2000);
+                }
             }).catch(err => {
                 alert('Failed to copy to clipboard: ' + err.message);
             });
