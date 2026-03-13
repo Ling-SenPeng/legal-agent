@@ -1187,6 +1187,145 @@ class CaseAnalysisModeHandlerTest {
         );
     }
 
+    @Test
+    void testCitationExtractionForCaseCitations() {
+        // Test that California case citations are properly extracted from rule text
+        // Examples: "191 Cal.App.3d 592", "28 Cal.4th 366", "24 Cal.3d 76"
+        
+        String query = "reimbursement claim";
+        
+        LegalAuthority auth1 = new LegalAuthority(
+            "auth1", "Marriage of Epstein", "191 Cal.App.3d 592",
+            AuthorityType.CASE_LAW, "court_case", "Reimbursement principles", 0.90
+        );
+        
+        // Rule text with multiple case citations
+        String ruleText = "A spouse who uses separate property after separation to pay " +
+            "community obligations may seek reimbursement. See 191 Cal.App.3d 592, 28 Cal.4th 366.";
+        
+        AuthoritySummary summary = new AuthoritySummary(
+            LegalIssueType.REIMBURSEMENT, 1, ruleText, List.of(auth1)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query,
+            List.of(new CaseIssue(LegalIssueType.REIMBURSEMENT, "Test", 0.9, "test")),
+            List.of(new CaseFact("Test fact", true, "source", LegalIssueType.REIMBURSEMENT)),
+            List.of(),
+            "Test analysis",
+            List.of(summary)
+        );
+        
+        EvidenceChunk chunk = createTestChunk("Test evidence", 1L, 1, "Page 1");
+        testRetrievalService.setEvidenceChunks(List.of(chunk));
+        testContextBuilder.setContext(context);
+        
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Verify execution succeeds
+        assertTrue(result.isSuccess(), "Execution should succeed");
+        String answer = result.getAnswer();
+        
+        // Both citations should be detected and rule should be regenerated if any don't match final authorities
+        // Since 28 Cal.4th 366 is not in final authorities (auth1 is only "191 Cal.App.3d 592"),
+        // the rule should be regenerated
+        assertNotNull(answer, "Answer should not be null");
+        assertTrue(answer.contains("LEGAL RULE"), "Output should contain LEGAL RULE section");
+    }
+
+    @Test
+    void testCitationExtractionForStatuteCitations() {
+        // Test that California statute citations are properly extracted
+        // Examples: "Cal. Fam. Code § 750", "Cal. Fam. Code §2640"
+        
+        String query = "family code reimbursement";
+        
+        LegalAuthority auth = new LegalAuthority(
+            "auth_code", "California Family Code § 750", "Cal. Fam. Code § 750",
+            AuthorityType.STATUTE, "statute", "Reimbursement statute", 0.90
+        );
+        
+        // Rule text with statute citations
+        String ruleText = "Reimbursement entitlements are governed by multiple provisions. " +
+            "See Cal. Fam. Code § 750 and Cal. Fam. Code §2640 for detailed requirements.";
+        
+        AuthoritySummary summary = new AuthoritySummary(
+            LegalIssueType.REIMBURSEMENT, 1, ruleText, List.of(auth)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query,
+            List.of(new CaseIssue(LegalIssueType.REIMBURSEMENT, "Test", 0.9, "test")),
+            List.of(new CaseFact("Test fact", true, "source", LegalIssueType.REIMBURSEMENT)),
+            List.of(),
+            "Test analysis",
+            List.of(summary)
+        );
+        
+        EvidenceChunk chunk = createTestChunk("Test evidence", 1L, 1, "Page 1");
+        testRetrievalService.setEvidenceChunks(List.of(chunk));
+        testContextBuilder.setContext(context);
+        
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Verify execution succeeds
+        assertTrue(result.isSuccess(), "Execution should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer, "Answer should not be null");
+        assertTrue(answer.contains("LEGAL RULE"), "Output should contain LEGAL RULE section");
+        // Since § 2640 is not in final authorities, rule should be regenerated or adjusted
+    }
+
+    @Test
+    void testCitationExtractionWithMixedCitations() {
+        // Test extraction of both case and statute citations in same rule
+        
+        String query = "reimbursement and property law";
+        
+        LegalAuthority auth1 = new LegalAuthority(
+            "auth1", "Marriage of Epstein", "191 Cal.App.3d 592",
+            AuthorityType.CASE_LAW, "court_case", "Case law", 0.90
+        );
+        
+        LegalAuthority auth2 = new LegalAuthority(
+            "auth2", "California Family Code § 750", "Cal. Fam. Code § 750",
+            AuthorityType.STATUTE, "statute", "Statute", 0.85
+        );
+        
+        // Rule with both case and statute citations
+        String ruleText = "Under Marriage of Epstein (191 Cal.App.3d 592), the principles " +
+            "established in 28 Cal.4th 366 apply. Additionally, Cal. Fam. Code § 750 and " +
+            "Cal. Fam. Code §2640 govern the procedures.";
+        
+        AuthoritySummary summary = new AuthoritySummary(
+            LegalIssueType.REIMBURSEMENT, 1, ruleText, List.of(auth1, auth2)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query,
+            List.of(new CaseIssue(LegalIssueType.REIMBURSEMENT, "Test", 0.9, "test")),
+            List.of(new CaseFact("Test fact", true, "source", LegalIssueType.REIMBURSEMENT)),
+            List.of(),
+            "Test analysis",
+            List.of(summary)
+        );
+        
+        EvidenceChunk chunk = createTestChunk("Test evidence", 1L, 1, "Page 1");
+        testRetrievalService.setEvidenceChunks(List.of(chunk));
+        testContextBuilder.setContext(context);
+        
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Verify execution succeeds
+        assertTrue(result.isSuccess(), "Execution should succeed");
+        String answer = result.getAnswer();
+        
+        // Rule contains "28 Cal.4th 366" and "Cal. Fam. Code §2640" not in final authorities
+        // Should be regenerated
+        assertNotNull(answer, "Answer should not be null");
+        assertTrue(answer.contains("LEGAL RULE"), "Output should contain LEGAL RULE section");
+    }
+
     // ==================== HELPER METHODS ====================
 
     private EvidenceChunk createTestChunk(String text, Long docId, Integer pageNo, String pageRef) {

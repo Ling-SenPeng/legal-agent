@@ -1146,6 +1146,12 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * Extract all citations mentioned in rule text.
      * Looks for patterns like: "191 Cal.App.3d 592", "28 Cal.4th 366", "Cal. Fam. Code § 750", etc.
      * 
+     * California Case Citation Format: volume + reporter + page
+     * Examples: "191 Cal.App.3d 592", "28 Cal.4th 366", "24 Cal.3d 76"
+     * 
+     * California Code Citation Format: jurisdiction + code name + section
+     * Examples: "Cal. Fam. Code § 750", "Cal. Fam. Code §2640"
+     * 
      * @param ruleText Text to extract citations from
      * @return Set of citation strings found in text
      */
@@ -1153,32 +1159,48 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         Set<String> citations = new HashSet<>();
         
         if (ruleText == null || ruleText.isEmpty()) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("[CITATION_EXTRACT] Rule text is null or empty");
+            }
             return citations;
         }
         
-        // Pattern: digits + Cal + digits (e.g., "191 Cal.App.3d 592", "28 Cal.4th 366")
-        // More specific to catch formats like "28 Cal.4th 366"
-        java.util.regex.Pattern reporterPattern = java.util.regex.Pattern
-            .compile("(\\d+\\s+Cal(?:\\.)?\\s*(?:App\\.?)?\\s*(?:\\w+\\.?)?\\s+\\d+\\s+\\d+)");
+        // Pattern 1: California case citations
+        // Format: volume + Cal[.reporter.series] + page
+        // Examples: "191 Cal.App.3d 592", "28 Cal.4th 366", "24 Cal.3d 76", "33 Cal.App.4th 277"
+        // Simpler pattern: \d+ (volume) + Cal\S* (reporter like Cal, Cal.App.3d, Cal.2d) + \d+ (page)
+        java.util.regex.Pattern casePattern = java.util.regex.Pattern
+            .compile("\\b(\\d+\\s+Cal\\S*\\s+\\d+)\\b");
         
-        java.util.regex.Matcher reporterMatcher = reporterPattern.matcher(ruleText);
-        while (reporterMatcher.find()) {
-            String match = reporterMatcher.group(1).trim();
-            if (!match.isEmpty()) {
-                citations.add(match);
+        java.util.regex.Matcher caseMatcher = casePattern.matcher(ruleText);
+        while (caseMatcher.find()) {
+            String match = caseMatcher.group(1).trim();
+            citations.add(match);
+            if (logger.isDebugEnabled()) {
+                logger.debug("[CITATION_EXTRACT] Found case citation: {}", match);
             }
         }
         
-        // Pattern for code sections: "California Family Code § 750", "Cal. Fam. Code § 750", etc.
-        // Match both abbreviated and full forms
+        // Pattern 2: California code sections
+        // Format: Cal[ifornia] [Fam.] Code § [section number]
+        // Examples: "Cal. Fam. Code § 750", "Cal. Fam. Code §2640", "Cal. Code § 1234"
         java.util.regex.Pattern codePattern = java.util.regex.Pattern
-            .compile("((?:California|Cal\\.?)\\s+(?:Family\\s+)?(?:Fam\\.\\s+)?Code\\s+(?:§\\s*)?\\d+)");
+            .compile("\\b(Cal(?:ifornia)?(?:\\.|\\s)\\s*(?:Family|Fam\\.?)?\\s*Code\\s+(?:§|sections?)?\\s*\\d+)\\b");
         
         java.util.regex.Matcher codeMatcher = codePattern.matcher(ruleText);
         while (codeMatcher.find()) {
             String match = codeMatcher.group(1).trim();
-            if (!match.isEmpty()) {
-                citations.add(match);
+            citations.add(match);
+            if (logger.isDebugEnabled()) {
+                logger.debug("[CITATION_EXTRACT] Found code citation: {}", match);
+            }
+        }
+        
+        if (logger.isDebugEnabled()) {
+            if (citations.isEmpty()) {
+                logger.debug("[CITATION_EXTRACT] No citations found in rule text");
+            } else {
+                logger.debug("[CITATION_EXTRACT] Extracted {} citations total", citations.size());
             }
         }
         
