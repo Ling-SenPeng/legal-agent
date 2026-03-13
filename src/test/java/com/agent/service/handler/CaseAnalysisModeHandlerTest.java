@@ -13,6 +13,9 @@ import com.agent.service.analysis.CaseAnalysisQueryCleaner;
 import com.agent.service.analysis.CaseAnalysisRetrievalQueryBuilder;
 import com.agent.service.analysis.CaseIssueExtractor;
 import com.agent.service.analysis.FactClassifier;
+import com.agent.service.analysis.ClaimStrengthCalculator;
+import com.agent.service.analysis.CounterArgumentFilter;
+import com.agent.service.analysis.MortgageStatementParser;
 import com.agent.service.extraction.PaymentRecordExtractor;
 import com.agent.service.analysis.authority.IssueAuthorityRetrievalStrategy;
 import com.agent.service.analysis.authority.AuthorityRetrievalService;
@@ -56,6 +59,9 @@ class CaseAnalysisModeHandlerTest {
         var realAuthoritySummarizer = new AuthoritySummarizer();
         var testFactClassifier = new TestFactClassifier();
         var realPaymentRecordExtractor = new com.agent.service.extraction.PaymentRecordExtractor();
+        var realClaimStrengthCalculator = new ClaimStrengthCalculator();
+        var realCounterArgumentFilter = new CounterArgumentFilter();
+        var realMortgageStatementParser = new MortgageStatementParser();
         
         handler = new CaseAnalysisModeHandler(
             testRetrievalService, 
@@ -67,7 +73,10 @@ class CaseAnalysisModeHandlerTest {
             realAuthorityRetrievalService,
             realAuthoritySummarizer,
             testFactClassifier,
-            realPaymentRecordExtractor
+            realPaymentRecordExtractor,
+            realClaimStrengthCalculator,
+            realCounterArgumentFilter,
+            realMortgageStatementParser
         );
     }
 

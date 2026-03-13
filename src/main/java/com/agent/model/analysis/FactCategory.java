@@ -4,36 +4,74 @@ package com.agent.model.analysis;
  * Enumeration of fact categories for classification.
  * 
  * Used to classify text snippets into semantic categories
- * relevant to legal analysis.
+ * relevant to legal analysis. Categories also identify valid counterargument
+ * facts and noise that should be filtered.
  */
 public enum FactCategory {
     /**
-     * Facts related to payments (paid, payment, mortgage, amount due, etc.)
+     * Valid counterargument facts
      */
-    PAYMENT_FACT,
+    EXCLUSIVE_OCCUPANCY("Exclusive occupancy by other spouse"),
+    OFFSET_BENEFITS("Offset benefits received"),
+    MORTGAGE_ASSUMPTION_REFUSAL("Mortgage assumption refusal"),
+    SOURCE_OF_FUNDS_DISPUTE("Source of funds dispute"),
+    COMMUNITY_BENEFIT_DISPUTE("Community benefit dispute"),
     
     /**
-     * Facts about the source of funds (paid by me, my funds, separate funds, etc.)
+     * Supporting facts (payments, obligations, etc.)
      */
-    SOURCE_OF_FUNDS_FACT,
+    PAYMENT_FACT("Payment fact"),
+    SOURCE_OF_FUNDS_FACT("Source of funds fact"),
+    COMMUNITY_OBLIGATION_FACT("Community obligation fact"),
+    OFFSET_OR_BENEFIT_FACT("Offset or benefit fact"),
     
     /**
-     * Facts about community obligations (mortgage, loan, property, etc.)
+     * Noise categories to filter
      */
-    COMMUNITY_OBLIGATION_FACT,
+    INTEREST_RATE("Interest rate (noise)"),
+    LOAN_MATURITY("Loan maturity (noise)"),
+    MORTGAGE_ADVERTISEMENT("Mortgage advertisement (noise)"),
+    INSURANCE_MARKETING("Insurance marketing (noise)"),
     
     /**
-     * Facts about exclusive use, occupancy, benefits, or offsets
+     * Unclassified facts
      */
-    OFFSET_OR_BENEFIT_FACT,
+    UNRELATED_FACT("Unrelated fact"),
+    NOISY_FACT("Noisy or low-quality text");
+    
+    private final String description;
+    
+    FactCategory(String description) {
+        this.description = description;
+    }
+    
+    public String getDescription() {
+        return description;
+    }
     
     /**
-     * Facts that do not fit other categories
+     * Check if this category is a valid counterargument fact.
+     * 
+     * @return true if this category is relevant for counterarguments
      */
-    UNRELATED_FACT,
+    public boolean isValidCounterargumentFact() {
+        return this == EXCLUSIVE_OCCUPANCY ||
+               this == OFFSET_BENEFITS ||
+               this == MORTGAGE_ASSUMPTION_REFUSAL ||
+               this == SOURCE_OF_FUNDS_DISPUTE ||
+               this == COMMUNITY_BENEFIT_DISPUTE;
+    }
     
     /**
-     * Noisy or low-quality text (null, too short, boilerplate, table fragments, etc.)
+     * Check if this category should be filtered out.
+     * 
+     * @return true if this category represents noise
      */
-    NOISY_FACT
+    public boolean isNoise() {
+        return this == INTEREST_RATE ||
+               this == LOAN_MATURITY ||
+               this == MORTGAGE_ADVERTISEMENT ||
+               this == INSURANCE_MARKETING ||
+               this == NOISY_FACT;
+    }
 }

@@ -11,7 +11,7 @@ public record AgentQueryResponse(
     String answer,
     
     @JsonProperty("evidence")
-    List<EvidenceChunk> evidence,
+    List<EvidenceDTO> evidence,
     
     @JsonProperty("verification")
     VerificationReport verification,

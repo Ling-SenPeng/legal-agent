@@ -19,6 +19,9 @@ import com.agent.service.analysis.authority.IssueAuthorityRetrievalStrategy;
 import com.agent.service.analysis.authority.AuthorityRetrievalService;
 import com.agent.service.analysis.authority.AuthoritySummarizer;
 import com.agent.service.analysis.FactClassifier;
+import com.agent.service.analysis.ClaimStrengthCalculator;
+import com.agent.service.analysis.CounterArgumentFilter;
+import com.agent.service.analysis.MortgageStatementParser;
 import com.agent.service.extraction.PaymentRecordExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,6 +67,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private final AuthoritySummarizer authoritySummarizer;
     private final FactClassifier factClassifier;
     private final PaymentRecordExtractor paymentRecordExtractor;
+    private final ClaimStrengthCalculator claimStrengthCalculator;
+    private final CounterArgumentFilter counterArgumentFilter;
+    private final MortgageStatementParser mortgageStatementParser;
     
     // ThreadLocal to store evidence chunks during execution for access in nested methods
     private final ThreadLocal<List<EvidenceChunk>> currentEvidenceChunks = new ThreadLocal<>();
@@ -81,7 +87,10 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         AuthorityRetrievalService authorityRetrievalService,
         AuthoritySummarizer authoritySummarizer,
         FactClassifier factClassifier,
-        PaymentRecordExtractor paymentRecordExtractor
+        PaymentRecordExtractor paymentRecordExtractor,
+        ClaimStrengthCalculator claimStrengthCalculator,
+        CounterArgumentFilter counterArgumentFilter,
+        MortgageStatementParser mortgageStatementParser
     ) {
         this.retrievalService = retrievalService;
         this.contextBuilder = contextBuilder;
@@ -93,6 +102,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         this.authoritySummarizer = authoritySummarizer;
         this.factClassifier = factClassifier;
         this.paymentRecordExtractor = paymentRecordExtractor;
+        this.claimStrengthCalculator = claimStrengthCalculator;
+        this.counterArgumentFilter = counterArgumentFilter;
+        this.mortgageStatementParser = mortgageStatementParser;
     }
 
     @Override
@@ -670,12 +682,15 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         // Overall confidence = combination of issue confidence and fact availability
         double confidence = (avgIssueConfidence * 0.6) + (factAvailability * 0.4);
         
-        // Assess strength level
-        CaseAnalysisResult.StrengthLevel strengthLevel = assessStrength(
+        // Count weak elements for constraint calculation
+        int weakElementCount = countWeakElements(context);
+        
+        // Use ClaimStrengthCalculator with enforced constraints
+        CaseAnalysisResult.StrengthLevel strengthLevel = claimStrengthCalculator.calculateStrength(
             supportingFacts,
             adverseFacts,
             missingFacts,
-            issues.size()
+            weakElementCount
         );
         
         // Build analysis narrative
@@ -692,53 +707,28 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             recommendations
         );
     }
-
+    
     /**
-     * Assess strength level based on facts and issues.
+     * Count the number of weak element assessments.
      * 
-     * @return StrengthLevel assessment
+     * @param context Case analysis context
+     * @return Number of weak elements
      */
-    private CaseAnalysisResult.StrengthLevel assessStrength(
-        long supporting,
-        long adverse,
-        long missing,
-        int issueCount
-    ) {
-        if (issueCount == 0) {
-            return CaseAnalysisResult.StrengthLevel.MODERATE;
+    private int countWeakElements(CaseAnalysisContext context) {
+        // This is a simplified implementation - can be enhanced with more detailed element assessment
+        int weakElementCount = 0;
+        
+        // Count rule elements with insufficient supporting facts
+        List<CaseFact> facts = context.getRelevantFacts();
+        long supportingFacts = facts.stream().filter(CaseFact::isFavorable).count();
+        
+        if (supportingFacts == 0) {
+            weakElementCount += context.getIdentifiedIssues().size();
+        } else if (supportingFacts <= 2) {
+            weakElementCount += Math.max(0, context.getIdentifiedIssues().size() - 1);
         }
         
-        long total = supporting + adverse;
-        if (total == 0) {
-            return CaseAnalysisResult.StrengthLevel.WEAK;
-        }
-        
-        double supportingRatio = (double) supporting / total;
-        double missingRatio = missing / (double) (total + missing);
-        
-        // Strong case: mostly supporting facts, few missing
-        if (supportingRatio > 0.75 && missingRatio < 0.2) {
-            return CaseAnalysisResult.StrengthLevel.VERY_STRONG;
-        }
-        if (supportingRatio > 0.65 && missingRatio < 0.3) {
-            return CaseAnalysisResult.StrengthLevel.STRONG;
-        }
-        
-        // Moderate case: mixed facts
-        if (supportingRatio >= 0.4 && supportingRatio <= 0.65) {
-            return CaseAnalysisResult.StrengthLevel.MODERATE;
-        }
-        
-        // Weak case: mostly adverse or many missing
-        if (supportingRatio < 0.4 || missingRatio > 0.5) {
-            return CaseAnalysisResult.StrengthLevel.WEAK;
-        }
-        
-        if (supportingRatio < 0.25) {
-            return CaseAnalysisResult.StrengthLevel.VERY_WEAK;
-        }
-        
-        return CaseAnalysisResult.StrengthLevel.MODERATE;
+        return weakElementCount;
     }
 
     /**
@@ -2910,21 +2900,24 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             .filter(f -> !f.isFavorable())
             .toList();
         
+        // Filter counterargument facts to remove noise
+        List<CaseFact> filteredFacts = counterArgumentFilter.filterCounterargumentFacts(unfavorableFacts);
+        
         // Log counterargument candidates
-        if (!unfavorableFacts.isEmpty()) {
-            for (CaseFact unfavorable : unfavorableFacts.stream().limit(2).toList()) {
+        if (!filteredFacts.isEmpty()) {
+            for (CaseFact unfavorable : filteredFacts.stream().limit(2).toList()) {
                 logger.debug("[COUNTERARGUMENT_CANDIDATE] text={}", unfavorable.getDescription());
             }
         }
         
-        if (unfavorableFacts.isEmpty()) {
+        if (filteredFacts.isEmpty()) {
             return "The opposing party has limited factual support for their position.";
         }
         
         StringBuilder counterclaim = new StringBuilder();
         counterclaim.append("The opposing party could point to the following facts: ");
         counterclaim.append(
-            unfavorableFacts.stream()
+            filteredFacts.stream()
                 .limit(2)
                 .map(CaseFact::getDescription)
                 .collect(Collectors.joining("; "))

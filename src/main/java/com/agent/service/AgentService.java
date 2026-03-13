@@ -4,10 +4,12 @@ import com.agent.config.AgentProperties;
 import com.agent.model.AgentQueryRequest;
 import com.agent.model.AgentQueryResponse;
 import com.agent.model.EvidenceChunk;
+import com.agent.model.EvidenceDTO;
 import com.agent.model.ModeExecutionResult;
 import com.agent.model.RetrievalPlan;
 import com.agent.model.TaskMode;
 import com.agent.model.VerificationReport;
+import com.agent.service.mapper.EvidenceMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -31,6 +33,7 @@ public class AgentService {
     private final VerificationService verificationService;
     private final OpenAiClient openAiClient;
     private final AgentProperties agentProperties;
+    private final EvidenceMapper evidenceMapper;
 
     public AgentService(
         TaskModeOrchestrator orchestrator,
@@ -38,7 +41,8 @@ public class AgentService {
         DraftingService draftingService,
         VerificationService verificationService,
         OpenAiClient openAiClient,
-        AgentProperties agentProperties
+        AgentProperties agentProperties,
+        EvidenceMapper evidenceMapper
     ) {
         this.orchestrator = orchestrator;
         this.retrievalService = retrievalService;
@@ -46,6 +50,7 @@ public class AgentService {
         this.verificationService = verificationService;
         this.openAiClient = openAiClient;
         this.agentProperties = agentProperties;
+        this.evidenceMapper = evidenceMapper;
     }
 
     /**
@@ -85,15 +90,19 @@ public class AgentService {
             
             // Step 2: For DOCUMENT_QA mode, retrieve evidence for response details
             // (Preserves existing behavior of including evidence chunks and verification in response)
-            List<EvidenceChunk> evidenceChunks = List.of();
+            List<EvidenceDTO> evidenceDTOs = List.of();
             VerificationReport verification = new VerificationReport(true, List.of(), "Success");
             
             if (modeResult.getMode() == TaskMode.DOCUMENT_QA) {
                 logger.info("Step 2: Retrieving Evidence for DOCUMENT_QA Response");
                 
-                // Retrieve evidence for response
-                evidenceChunks = retrievalService.retrieveEvidence(request.question(), topK);
+                // Retrieve evidence chunks and map to DTOs
+                List<EvidenceChunk> evidenceChunks = retrievalService.retrieveEvidence(request.question(), topK);
                 logger.info("  Retrieved {} evidence chunks", evidenceChunks.size());
+                
+                // Map chunks to DTOs for response (top 5)
+                evidenceDTOs = evidenceMapper.mapToDto(evidenceChunks, 5);
+                logger.info("  Mapped to {} evidence DTOs for response", evidenceDTOs.size());
                 
                 // Verify final answer
                 verification = verificationService.verify(finalAnswer);
@@ -109,7 +118,7 @@ public class AgentService {
 
             return new AgentQueryResponse(
                 finalAnswer,
-                evidenceChunks,
+                evidenceDTOs,
                 verification,
                 processingTime
             );
