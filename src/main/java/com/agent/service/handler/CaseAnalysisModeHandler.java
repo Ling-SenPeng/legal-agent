@@ -2283,6 +2283,15 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                 continue;
             }
             
+            // Filter 2.5: Multi-line numeric/table fragments
+            // Reject: numeric-only or short numeric first line + table headers in later lines
+            if (isNumericTableFragment(desc)) {
+                if (logger.isDebugEnabled()) {
+                    rejectedFacts.add(truncateForLogging(desc) + " | reason=numeric_table_fragment");
+                }
+                continue;
+            }
+            
             // Filter 3: OCR garbage patterns (excessive special chars, broken text)
             long specialCharCount = desc.chars()
                 .filter(c -> "!@#%^&*~`|<>?/".indexOf(c) >= 0)
@@ -2402,5 +2411,87 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             return "(null)";
         }
         return text.length() > 70 ? text.substring(0, 70) + "..." : text;
+    }
+    
+    /**
+     * Detect multi-line numeric/table fragments that should be rejected.
+     * 
+     * Pattern: short numeric line(s) followed by table headers
+     * Examples:
+     * - "23\n\nMonthly Fees and Payment\nDate Paid | Description | Principal..."
+     * - Any text starting with numeric-only line + multiple lines with table structure
+     * 
+     * @param text The fact text to check
+     * @return true if this is a numeric/table fragment that should be rejected
+     */
+    private boolean isNumericTableFragment(String text) {
+        if (text == null || !text.contains("\n")) {
+            return false;  // Single-line, not a table fragment
+        }
+        
+        String[] lines = text.split("\\n");
+        if (lines.length < 2) {
+            return false;  // Need at least 2 lines
+        }
+        
+        // Check first non-empty line
+        String firstLine = null;
+        int firstLineIdx = -1;
+        for (int i = 0; i < lines.length; i++) {
+            String trimmed = lines[i].trim();
+            if (!trimmed.isEmpty()) {
+                firstLine = trimmed;
+                firstLineIdx = i;
+                break;
+            }
+        }
+        
+        if (firstLine == null || firstLine.isEmpty()) {
+            return false;
+        }
+        
+        // Check if first line is numeric-only or very short numeric
+        String noWhiteSpace = firstLine.replaceAll("\\s+", "");
+        boolean firstLineIsNumeric = noWhiteSpace.matches("^[0-9,.$]+$");
+        if (!firstLineIsNumeric) {
+            return false;  // First line must be numeric
+        }
+        
+        // Check if later lines contain table-like patterns
+        String lowerText = text.toLowerCase();
+        String[] tableHeaders = {
+            "monthly fees", "monthly payment", "date paid", "description",
+            "principal", "interest", "escrow", "charges", "unapplied",
+            "amount paid", "total due", "payment history", "transaction history",
+            "posting date", "balance", "payment schedule", "amortization"
+        };
+        
+        int tablePatternCount = 0;
+        for (String header : tableHeaders) {
+            if (lowerText.contains(header)) {
+                tablePatternCount++;
+            }
+        }
+        
+        // If first line is numeric AND we find multiple table patterns in later lines, it's likely a table fragment
+        if (tablePatternCount >= 2) {
+            return true;  // Looks like a numeric/table fragment
+        }
+        
+        // Also check for pipe-separated columns with table-like structure
+        if (text.contains("|") && lines.length >= 3) {
+            // Count how many lines have pipe separators
+            int pipeLineCount = 0;
+            for (String line : lines) {
+                if (line.contains("|")) {
+                    pipeLineCount++;
+                }
+            }
+            if (pipeLineCount >= 2) {
+                return true;  // Looks like a table with multiple pipe-separated lines
+            }
+        }
+        
+        return false;
     }
 }

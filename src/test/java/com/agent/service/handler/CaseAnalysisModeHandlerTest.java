@@ -1857,4 +1857,61 @@ class CaseAnalysisModeHandlerTest {
         assertTrue(answer.contains("mortgage") || answer.contains("$20,000"),
             "Quality facts should be available in output even with comprehensive logging");
     }
+
+    @Test
+    @DisplayName("Rejects multi-line numeric/table fragments in rendering filter")
+    void testRejectsNumericTableFragments() {
+        String query = "Payment history analysis?";
+        
+        // Create a multi-line numeric/table fragment (the problematic pattern)
+        String badTableFragment = "23\n\nMonthly Fees and Payment\n" +
+                                  "Date Paid |Description Principal Interest Escrow Amount Charges (Unapplied) Total\n" +
+                                  "09/02/25 PAYMENT $2,345";
+        
+        String goodPaymentFact = "I paid $20,000 in post-separation mortgage payments from my separate account";
+        
+        // Create chunks
+        EvidenceChunk badChunk = createTestChunk(badTableFragment, 1L, 1, "Page 1");
+        EvidenceChunk goodChunk = createTestChunk(goodPaymentFact, 2L, 1, "Page 2");
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact(goodPaymentFact, true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact(badTableFragment, true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Payment analysis with table fragment."
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(badChunk, goodChunk));
+        testContextBuilder.setContext(context);
+        
+        // Execute
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Verify: Handler succeeds
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.isSuccess(), "Handler should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer);
+        
+        // Verify: Good payment fact is present
+        assertTrue(answer.contains("$20,000") && answer.contains("post-separation mortgage"),
+            "Quality payment fact should be included");
+        
+        // Verify: Multi-line table fragment is rejected (should NOT appear in APPLICATION TO RULE)
+        int appToRuleStart = answer.indexOf("APPLICATION TO RULE");
+        int counterArgStart = answer.indexOf("COUNTERARGUMENTS");
+        if (appToRuleStart >= 0 && counterArgStart > appToRuleStart) {
+            String appSection = answer.substring(appToRuleStart, counterArgStart);
+            assertFalse(appSection.contains("Date Paid") || appSection.contains("Monthly Fees and Payment") ||
+                        appSection.contains("23\n"),
+                "Multi-line numeric/table fragment should be rejected by rendering filter");
+        }
+    }
 }
