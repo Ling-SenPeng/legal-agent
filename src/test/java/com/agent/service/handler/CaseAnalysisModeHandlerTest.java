@@ -949,6 +949,120 @@ class CaseAnalysisModeHandlerTest {
             "LEGAL RULE section header must appear before APPLICATION");
     }
     
+    @Test
+    void testLegalRuleCitationsMatchRenderedAuthorities() {
+        // Given: A reimbursement query with multiple authorities where some are higher ranked
+        String query = "post separation mortgage reimbursement";
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("Paid $25,000 in post-separation mortgage", true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        // Create three authorities: Epstein (statute), Moore (case law), and Huskey (case law)
+        LegalAuthority epstein = new LegalAuthority(
+            "auth_epstein",
+            "Epstein Factors",
+            "42 Cal.3d 120",
+            AuthorityType.STATUTE,
+            "California statute",
+            "Reimbursement factors summary",
+            0.95  // Highest score
+        );
+        
+        LegalAuthority moore = new LegalAuthority(
+            "auth_moore",
+            "Moore Case",
+            "49 Cal.3d 500",
+            AuthorityType.CASE_LAW,
+            "Case law",
+            "Generic reimbursement case",
+            0.70  // Lower score
+        );
+        
+        LegalAuthority huskey = new LegalAuthority(
+            "auth_huskey",
+            "Huskey Case",
+            "38 Cal.3d 800",
+            AuthorityType.CASE_LAW,
+            "Case law",
+            "Post-separation mortgage case",
+            0.92  // Second highest
+        );
+        
+        // Create authority summaries with all authorities
+        AuthoritySummary summary = new AuthoritySummary(
+            LegalIssueType.REIMBURSEMENT,
+            1,
+            "Reimbursement principles apply based on Epstein and Huskey case law.",
+            List.of(epstein, huskey, moore)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query,
+            issues,
+            facts,
+            List.of(),
+            "Reimbursement analysis",
+            List.of(summary)
+        );
+        
+        EvidenceChunk chunk = createTestChunk(
+            "Post-separation mortgage payment",
+            1L, 1, "Page 1"
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(chunk));
+        testContextBuilder.setContext(context);
+        
+        // When: Execute CASE_ANALYSIS mode
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then: Verify LEGAL RULE section citations match RELEVANT AUTHORITIES
+        assertTrue(result.isSuccess(), "Execution should succeed");
+        String answer = result.getAnswer();
+        assertNotNull(answer, "Answer should not be null");
+        
+        // Extract LEGAL RULE section
+        int legalRuleIdx = answer.indexOf("LEGAL RULE");
+        int authoritiesIdx = answer.indexOf("RELEVANT AUTHORITIES");
+        
+        assertTrue(legalRuleIdx >= 0, "LEGAL RULE section must exist");
+        assertTrue(authoritiesIdx >= 0, "RELEVANT AUTHORITIES section must exist");
+        assertTrue(legalRuleIdx < authoritiesIdx, "LEGAL RULE must appear before RELEVANT AUTHORITIES");
+        
+        String legalRuleSection = answer.substring(legalRuleIdx, authoritiesIdx);
+        String authoritiesSection = answer.substring(authoritiesIdx, answer.indexOf("APPLICATION"));
+        
+        // CRITICAL: Verify that RELEVANT AUTHORITIES shows only top 2 (Epstein + Huskey, not Moore)
+        // Since we're testing after ranking, only Epstein (statute +0.25 boost) and Huskey should be shown
+        assertTrue(authoritiesSection.contains("Epstein"),
+            "RELEVANT AUTHORITIES section must show Epstein (highest ranked)");
+        assertTrue(authoritiesSection.contains("Huskey"),
+            "RELEVANT AUTHORITIES section must show Huskey (second highest ranked)");
+        assertFalse(authoritiesSection.contains("Moore"),
+            "RELEVANT AUTHORITIES section must NOT show Moore (ranked below top 2)");
+        
+        // CRITICAL: Verify LEGAL RULE doesn't mention authorities that aren't displayed
+        // If LEGAL RULE contains authority names, they must match RELEVANT AUTHORITIES
+        if (legalRuleSection.contains("Moore")) {
+            fail("LEGAL RULE should not reference Moore since it's not in final RELEVANT AUTHORITIES");
+        }
+        
+        // Verify consistency: If rule mentions an authority, it must be in RELEVANT AUTHORITIES
+        if (legalRuleSection.toLowerCase().contains("epstein")) {
+            assertTrue(authoritiesSection.contains("Epstein"),
+                "If LEGAL RULE mentions Epstein, it must appear in RELEVANT AUTHORITIES");
+        }
+        
+        if (legalRuleSection.toLowerCase().contains("huskey")) {
+            assertTrue(authoritiesSection.contains("Huskey"),
+                "If LEGAL RULE mentions Huskey, it must appear in RELEVANT AUTHORITIES");
+        }
+    }
 
     // ==================== HELPER METHODS ====================
 

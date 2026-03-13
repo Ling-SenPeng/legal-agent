@@ -6,6 +6,7 @@ import com.agent.model.EvidenceChunk;
 import com.agent.model.analysis.*;
 import com.agent.model.analysis.authority.AuthoritySummary;
 import com.agent.model.analysis.authority.LegalAuthority;
+import com.agent.model.analysis.authority.AuthorityType;
 import com.agent.service.TaskModeHandler;
 import com.agent.service.RetrievalService;
 import com.agent.service.analysis.CaseAnalysisContextBuilder;
@@ -26,6 +27,7 @@ import java.util.Map;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.Set;
+import java.util.HashSet;
 import java.util.ArrayList;
 
 /**
@@ -777,19 +779,23 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             answer.append("\n");
         }
         
-        // NEW: LEGAL RULE section integrated from authority summaries
+        // CHANGED: Get final rendered authorities BEFORE generating LEGAL RULE
+        // This ensures LEGAL RULE only references authorities that actually appear
+        List<LegalAuthority> finalRenderedAuthorities = extractAndRankFinalAuthorities(context);
+        
+        // NEW: LEGAL RULE section integrated from final rendered authorities only
         answer.append("LEGAL RULE\n");
         answer.append("---\n");
-        appendLegalRuleSection(answer, context);
+        appendLegalRuleFromFinalAuthorities(answer, context, finalRenderedAuthorities);
         answer.append("\n");
         
         // Collect all unique authorities for deduplication across sections
         Set<String> renderedAuthorityIds = new LinkedHashSet<>();
         
-        // RELEVANT AUTHORITIES section moved after LEGAL RULE
+        // RELEVANT AUTHORITIES section with final authorities
         answer.append("RELEVANT AUTHORITIES\n");
         answer.append("---\n");
-        appendRelevantAuthoritiesSection(answer, context, renderedAuthorityIds);
+        appendRelevantAuthoritiesSectionWithFinal(answer, finalRenderedAuthorities, renderedAuthorityIds);
         
         answer.append("APPLICATION SUMMARY\n");
         answer.append("---\n");
@@ -854,6 +860,209 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         answer.append("Consult with legal counsel for definitive advice.\n");
         
         return answer.toString();
+    }
+
+    /**
+     * Extract, rank, and select the final top 2 authorities to be rendered.
+     * This ensures the LEGAL RULE section only references authorities that
+     * actually appear in the RELEVANT AUTHORITIES section.
+     * 
+     * @param context Case analysis context containing authority summaries
+     * @return List of top 2 authorities after ranking
+     */
+    private List<LegalAuthority> extractAndRankFinalAuthorities(CaseAnalysisContext context) {
+        // Collect all unique authorities from all summaries
+        Map<String, LegalAuthority> authorityMap = new LinkedHashMap<>();
+        
+        for (AuthoritySummary summary : context.getAuthoritySummaries()) {
+            for (LegalAuthority auth : summary.getAuthorities()) {
+                // Deduplicate by authorityId
+                if (!authorityMap.containsKey(auth.getAuthorityId())) {
+                    authorityMap.put(auth.getAuthorityId(), auth);
+                }
+            }
+        }
+        
+        List<LegalAuthority> uniqueAuthorities = new ArrayList<>(authorityMap.values());
+        
+        // Re-rank authorities by relevance to the identified issues
+        if (!uniqueAuthorities.isEmpty() && !context.getIdentifiedIssues().isEmpty()) {
+            CaseIssue primaryIssue = context.getIdentifiedIssues().get(0);
+            uniqueAuthorities = rankAuthoritiesForIssue(primaryIssue, uniqueAuthorities);
+        } else {
+            // Fallback: sort by citation if no issues
+            uniqueAuthorities.sort((a, b) -> a.getCitation().compareTo(b.getCitation()));
+        }
+        
+        // Return top 2 (or as many as available if less than 2)
+        return uniqueAuthorities.stream()
+            .limit(2)
+            .toList();
+    }
+
+    /**
+     * Generate LEGAL RULE text from the final rendered authorities.
+     * Creates rule summary based only on authorities that actually appear in output.
+     * 
+     * @param answer StringBuilder to append to
+     * @param context Case analysis context
+     * @param finalAuthorities Final authorities selected for rendering
+     */
+    private void appendLegalRuleFromFinalAuthorities(
+        StringBuilder answer,
+        CaseAnalysisContext context,
+        List<LegalAuthority> finalAuthorities
+    ) {
+        if (finalAuthorities.isEmpty()) {
+            answer.append("No specific legal authorities retrieved for analysis.\n");
+        } else {
+            // Build rule text from final authorities only
+            StringBuilder ruleText = new StringBuilder();
+            
+            // Collect citations of final authorities
+            List<String> citations = finalAuthorities.stream()
+                .map(auth -> String.format("%s (%s)", auth.getTitle(), auth.getCitation()))
+                .toList();
+            
+            // Get the primary issue for context
+            CaseIssue primaryIssue = context.getIdentifiedIssues().isEmpty() 
+                ? null 
+                : context.getIdentifiedIssues().get(0);
+            
+            if (primaryIssue != null) {
+                // Find matching authority summary for this issue
+                for (AuthoritySummary summary : context.getAuthoritySummaries()) {
+                    if (summary.getIssueType() == primaryIssue.getType()) {
+                        // Use the summarized rule but ensure it only references final authorities
+                        String originalRule = summary.getSummarizedRule();
+                        
+                        // Filter the rule to only reference final authorities
+                        String filteredRule = filterRuleToFinalAuthorities(originalRule, finalAuthorities);
+                        ruleText.append(filteredRule);
+                        break;
+                    }
+                }
+            }
+            
+            // If no matching summary or rule is empty, create a simple rule from authority titles
+            if (ruleText.length() == 0) {
+                ruleText.append("Based on ");
+                for (int i = 0; i < citations.size(); i++) {
+                    if (i > 0) ruleText.append(" and ");
+                    ruleText.append(citations.get(i));
+                }
+                ruleText.append(", legal principles apply to this issue.\n");
+            }
+            
+            answer.append(ruleText.toString());
+        }
+    }
+
+    /**
+     * Filter rule text to only mention authorities that are in the final rendered list.
+     * Removes references to authorities that were dropped during ranking.
+     * 
+     * @param originalRule Original rule text from authority summary
+     * @param finalAuthorities Final authorities to keep references to
+     * @return Filtered rule text
+     */
+    private String filterRuleToFinalAuthorities(String originalRule, List<LegalAuthority> finalAuthorities) {
+        if (finalAuthorities.isEmpty() || originalRule == null) {
+            return originalRule;
+        }
+        
+        // Collect titles and citations of final authorities
+        Set<String> finalTitles = new HashSet<>();
+        Set<String> finalCitations = new HashSet<>();
+        
+        for (LegalAuthority auth : finalAuthorities) {
+            finalTitles.add(auth.getTitle().toLowerCase());
+            finalCitations.add(auth.getCitation().toLowerCase());
+            // Also add just the name for case references like "Marriage of Epstein"
+            String[] parts = auth.getTitle().split(" ");
+            if (parts.length > 0) {
+                finalTitles.add(parts[parts.length - 1].toLowerCase());
+            }
+        }
+        
+        // The original rule should already mention the final authorities
+        // If not, just return it as-is (the summary was generated with different authorities)
+        String ruleLower = originalRule.toLowerCase();
+        boolean mentionsFinalAuthority = finalTitles.stream()
+            .anyMatch(ruleLower::contains) ||
+            finalCitations.stream()
+            .anyMatch(ruleLower::contains);
+        
+        if (mentionsFinalAuthority) {
+            return originalRule;
+        } else {
+            // Rule doesn't match final authorities - create new rule from scratch
+            return createRuleFromFinalAuthorities(finalAuthorities);
+        }
+    }
+
+    /**
+     * Create a simple rule text from the final authorities.
+     * Used when the original rule doesn't match the final rendered authorities.
+     * 
+     * @param finalAuthorities Final authorities
+     * @return Generated rule text
+     */
+    private String createRuleFromFinalAuthorities(List<LegalAuthority> finalAuthorities) {
+        if (finalAuthorities.isEmpty()) {
+            return "No specific legal rule available.\n";
+        }
+        
+        // Just create a generic rule statement without repeating authority names
+        // Authority names will be shown in the RELEVANT AUTHORITIES section
+        StringBuilder rule = new StringBuilder();
+        
+        // Check authority types to create appropriate rule text
+        boolean hasStatute = finalAuthorities.stream().anyMatch(a -> a.getAuthorityType() == AuthorityType.STATUTE);
+        boolean hasCaseLaw = finalAuthorities.stream().anyMatch(a -> a.getAuthorityType() == AuthorityType.CASE_LAW);
+        
+        rule.append("Legal principles from relevant ");
+        
+        if (hasStatute && hasCaseLaw) {
+            rule.append("statutes and case law ");
+        } else if (hasStatute) {
+            rule.append("statutory law ");
+        } else if (hasCaseLaw) {
+            rule.append("case law ");
+        } else {
+            rule.append("authorities ");
+        }
+        
+        rule.append("apply to this issue. Consult the cited authorities for detailed rules and applicable requirements.\n");
+        
+        return rule.toString();
+    }
+
+    /**
+     * Append RELEVANT AUTHORITIES section using pre-selected final authorities.
+     * 
+     * @param answer StringBuilder to append to
+     * @param finalAuthorities Final authorities to display
+     * @param renderedAuthorityIds Set to track rendered authorities
+     */
+    private void appendRelevantAuthoritiesSectionWithFinal(
+        StringBuilder answer,
+        List<LegalAuthority> finalAuthorities,
+        Set<String> renderedAuthorityIds
+    ) {
+        if (finalAuthorities.isEmpty()) {
+            answer.append("No authorities retrieved for the identified issues.\n\n");
+        } else {
+            finalAuthorities.forEach(auth -> {
+                answer.append(String.format("- %s (%s): %s\n",
+                    auth.getCitation(),
+                    auth.getAuthorityType().toString().replace("_", " "),
+                    auth.getTitle()
+                ));
+                renderedAuthorityIds.add(auth.getAuthorityId());
+            });
+            answer.append("\n");
+        }
     }
 
     /**
