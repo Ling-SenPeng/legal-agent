@@ -2000,8 +2000,13 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         CaseProfile profile = currentCaseProfile.get();
         String dos = profile != null ? profile.getDateOfSeparation() : null;
         
+        if (profile != null) {
+            logger.info("[CASE_PROFILE] dos={}", profile.getDateOfSeparation());
+        }
+        
         List<EvidenceChunk> chunks = currentEvidenceChunks.get();
         if (chunks == null || chunks.isEmpty()) {
+            logger.debug("[REIMBURSEMENT_PAYMENT_RECORDS] count=0 reason=no_evidence_chunks");
             return paymentFacts;
         }
         
@@ -2010,6 +2015,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             "mortgage", "payment", "loan", "principal", "interest",
             "monthly", "due date", "amortization", "statement"
         };
+        
+        List<String> extractedRecordLogs = new ArrayList<>();
         
         for (EvidenceChunk chunk : chunks) {
             String content = chunk.text().toLowerCase();
@@ -2037,11 +2044,11 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                 if (dos != null && !dos.isBlank()) {
                     PaymentDateFilterResult filterResult = filterPaymentByDOS(record, dos);
                     if (!filterResult.isIncluded()) {
-                        logger.info("[DOS_FILTER] recordDate={} dos={} decision=EXCLUDE reason={}",
+                        logger.debug("[DOS_FILTER] paymentDate={} dos={} decision=EXCLUDE reason={}",
                             record.getPaymentDate(), dos, filterResult.getReason());
                         continue;  // Skip records before DOS
                     }
-                    logger.info("[DOS_FILTER] recordDate={} dos={} decision=INCLUDE",
+                    logger.debug("[DOS_FILTER] paymentDate={} dos={} decision=INCLUDE",
                         record.getPaymentDate(), dos);
                 }
                 
@@ -2055,10 +2062,28 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                     );
                     paymentFacts.add(fact);
                     
+                    // Log extracted record details
+                    String recordLog = String.format("property:%s, date:%s, amount:%.2f, loan:%s",
+                        record.getPropertyName() != null ? record.getPropertyName() : "unknown",
+                        record.getPaymentDate() != null ? record.getPaymentDate() : "unknown",
+                        record.getAmount() != null ? record.getAmount() : 0.0,
+                        record.getLoanNumber() != null ? record.getLoanNumber() : "unknown");
+                    extractedRecordLogs.add(recordLog);
+                    
                     logger.debug("[PAYMENT_RECORD_EXTRACTION] Extracted payment fact: {} | source={}",
                         factDescription, source);
                 }
             }
+        }
+        
+        // Log summary of extracted records
+        if (!extractedRecordLogs.isEmpty()) {
+            logger.info("[REIMBURSEMENT_PAYMENT_RECORDS] count={}", extractedRecordLogs.size());
+            for (String recordLog : extractedRecordLogs) {
+                logger.info("[REIMBURSEMENT_PAYMENT_RECORDS] record={}", recordLog);
+            }
+        } else {
+            logger.info("[REIMBURSEMENT_PAYMENT_RECORDS] count=0");
         }
         
         return paymentFacts;
@@ -2289,7 +2314,27 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         }
         
         // Keep at most 2 high-quality supporting facts per rule element
-        return supportingFacts.stream().distinct().limit(2).toList();
+        List<CaseFact> finalFacts = supportingFacts.stream().distinct().limit(2).toList();
+        
+        // Log final supporting facts for reimbursement element
+        if (issueType == LegalIssueType.REIMBURSEMENT && 
+            element.toLowerCase().contains("post-separation") && 
+            element.toLowerCase().contains("payment")) {
+            if (!finalFacts.isEmpty()) {
+                int index = 1;
+                for (CaseFact fact : finalFacts) {
+                    String source = fact.getSourceReference() != null && fact.getSourceReference().contains("Doc") ? 
+                        "PAYMENT_RECORD" : "RAW_SNIPPET";
+                    logger.info("[REIMBURSEMENT_ELEMENT_1_SUPPORT] fact={} source={}", 
+                        fact.getDescription(), source);
+                    index++;
+                }
+            } else {
+                logger.info("[REIMBURSEMENT_ELEMENT_1_SUPPORT] fact=(none identified) source=N/A");
+            }
+        }
+        
+        return finalFacts;
     }
     
     /**
@@ -2864,6 +2909,13 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         List<CaseFact> unfavorableFacts = context.getRelevantFacts().stream()
             .filter(f -> !f.isFavorable())
             .toList();
+        
+        // Log counterargument candidates
+        if (!unfavorableFacts.isEmpty()) {
+            for (CaseFact unfavorable : unfavorableFacts.stream().limit(2).toList()) {
+                logger.debug("[COUNTERARGUMENT_CANDIDATE] text={}", unfavorable.getDescription());
+            }
+        }
         
         if (unfavorableFacts.isEmpty()) {
             return "The opposing party has limited factual support for their position.";
