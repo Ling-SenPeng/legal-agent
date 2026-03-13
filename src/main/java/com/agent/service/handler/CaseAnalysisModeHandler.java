@@ -806,29 +806,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         answer.append("APPLICATION SUMMARY\n");
         answer.append("---\n");
-        
-        // Favorable facts
-        List<CaseFact> favorableFacts = context.getRelevantFacts().stream()
-            .filter(CaseFact::isFavorable)
-            .toList();
-        if (!favorableFacts.isEmpty()) {
-            answer.append("Supporting Facts:\n");
-            favorableFacts.stream()
-                .limit(3)
-                .forEach(f -> answer.append("- ").append(f.getDescription()).append("\n"));
-        }
-        
-        // Unfavorable facts
-        List<CaseFact> unfavorableFacts = context.getRelevantFacts().stream()
-            .filter(f -> !f.isFavorable())
-            .toList();
-        if (!unfavorableFacts.isEmpty()) {
-            answer.append("\nChallenging Facts:\n");
-            unfavorableFacts.stream()
-                .limit(3)
-                .forEach(f -> answer.append("- ").append(f.getDescription()).append("\n"));
-        }
-        answer.append("\n");
+        appendApplicationToRuleSection(answer, context);
         
         answer.append("COUNTERARGUMENTS\n");
         answer.append("---\n");
@@ -1753,6 +1731,207 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     }
 
 
+
+    /**
+     * Append APPLICATION SUMMARY section showing rule element to fact mapping.
+     * Maps legal rule elements derived from issue type to supporting/missing facts.
+     * 
+     * @param answer StringBuilder to append to
+     * @param context Case analysis context
+     */
+    private void appendApplicationToRuleSection(StringBuilder answer, CaseAnalysisContext context) {
+        if (context.getIdentifiedIssues().isEmpty()) {
+            answer.append("No identified legal issues to analyze.\n\n");
+            return;
+        }
+        
+        // Get primary issue
+        CaseIssue primaryIssue = context.getIdentifiedIssues().get(0);
+        
+        // Derive rule elements for this issue type
+        List<String> ruleElements = deriveRuleElements(primaryIssue.getType());
+        
+        if (ruleElements.isEmpty()) {
+            answer.append("No specific rule elements identified for analysis.\n\n");
+            return;
+        }
+        
+        // For each rule element, show supporting facts, missing facts, and assessment
+        for (String element : ruleElements) {
+            answer.append("Element: ").append(element).append("\n");
+            
+            // Find supporting facts for this element
+            List<CaseFact> supportingFacts = findSupportingFactsForElement(element, context, primaryIssue.getType());
+            if (!supportingFacts.isEmpty()) {
+                answer.append("Supporting Facts:\n");
+                supportingFacts.stream()
+                    .limit(3)
+                    .forEach(f -> answer.append("  - ").append(f.getDescription()).append("\n"));
+            } else {
+                answer.append("Supporting Facts:\n");
+                answer.append("  (none identified)\n");
+            }
+            
+            // Find missing facts for this element
+            List<MissingFact> missingFacts = findMissingFactsForElement(element, context, primaryIssue.getType());
+            if (!missingFacts.isEmpty()) {
+                answer.append("Missing Facts:\n");
+                missingFacts.stream()
+                    .limit(2)
+                    .forEach(f -> answer.append("  - ").append(f.getDescription()).append("\n"));
+            }
+            
+            // Assessment: determine if element is supported, partially supported, weak, or unknown
+            String assessment = assessRuleElement(element, supportingFacts, missingFacts);
+            answer.append("Assessment: ").append(assessment).append("\n\n");
+        }
+    }
+    
+    /**
+     * Derive rule elements for a given issue type.
+     * Returns 2-4 key elements that must be proven for the issue.
+     * 
+     * @param issueType The legal issue type
+     * @return List of rule element descriptions
+     */
+    private List<String> deriveRuleElements(LegalIssueType issueType) {
+        List<String> elements = new ArrayList<>();
+        
+        switch (issueType) {
+            case REIMBURSEMENT:
+                elements.add("Post-separation payment was made to satisfy a community obligation");
+                elements.add("The payment was made with separate property funds");
+                elements.add("The payment provided a benefit to the community property or other spouse");
+                elements.add("No offset or benefit has been received for the payment");
+                break;
+            case PROPERTY_CHARACTERIZATION:
+                elements.add("Property was acquired during the marriage");
+                elements.add("Source of funds can be traced (community or separate)");
+                elements.add("No transmutation or commingling occurred");
+                elements.add("Applicable statutory characterization rules apply");
+                break;
+            case SUPPORT:
+                elements.add("Parties were married or in a registered domestic partnership");
+                elements.add("One party has the ability to pay support");
+                elements.add("The other party has a need for support");
+                elements.add("Financial circumstances meet statutory thresholds");
+                break;
+            case CUSTODY:
+                elements.add("Court has jurisdiction over custody determination");
+                elements.add("Child's best interests are the governing standard");
+                elements.add("Relevant statutory factors have been considered");
+                elements.add("Proposed arrangement serves the child's welfare");
+                break;
+            default:
+                elements.add("Primary legal principles apply");
+                elements.add("Statutory or case law requirements are met");
+                break;
+        }
+        
+        return elements;
+    }
+    
+    /**
+     * Find facts that support a given rule element.
+     * Matches facts based on keywords in the element description.
+     * 
+     * @param element Rule element description
+     * @param context Case analysis context
+     * @param issueType Issue type for context
+     * @return List of supporting facts
+     */
+    private List<CaseFact> findSupportingFactsForElement(
+        String element, CaseAnalysisContext context, LegalIssueType issueType
+    ) {
+        List<CaseFact> supportingFacts = new ArrayList<>();
+        
+        // Get favorable facts
+        List<CaseFact> favorableFacts = context.getRelevantFacts().stream()
+            .filter(CaseFact::isFavorable)
+            .filter(f -> f.getRelevantIssue() == issueType)
+            .toList();
+        
+        // Simple keyword matching to map facts to elements
+        String elementLower = element.toLowerCase();
+        
+        for (CaseFact fact : favorableFacts) {
+            String factLower = fact.getDescription().toLowerCase();
+            
+            // Check for keyword overlap
+            if (elementLower.contains("payment") && factLower.contains("paid")) supportingFacts.add(fact);
+            else if (elementLower.contains("separate") && (factLower.contains("separate") || factLower.contains("personal"))) supportingFacts.add(fact);
+            else if (elementLower.contains("community") && factLower.contains("community")) supportingFacts.add(fact);
+            else if (elementLower.contains("marriage") && (factLower.contains("marriage") || factLower.contains("married"))) supportingFacts.add(fact);
+            else if (elementLower.contains("benefit") && factLower.contains("benefit")) supportingFacts.add(fact);
+            else if (elementLower.contains("acquired") && (factLower.contains("acquired") || factLower.contains("purchased"))) supportingFacts.add(fact);
+            else if (elementLower.contains("traced") && (factLower.contains("trace") || factLower.contains("source"))) supportingFacts.add(fact);
+            else if (elementLower.contains("need") && factLower.contains("need")) supportingFacts.add(fact);
+            else if (elementLower.contains("ability") && (factLower.contains("income") || factLower.contains("asset"))) supportingFacts.add(fact);
+            else if (elementLower.contains("custody") && factLower.contains("custody")) supportingFacts.add(fact);
+        }
+        
+        return supportingFacts.stream().distinct().toList();
+    }
+    
+    /**
+     * Find missing facts for a given rule element.
+     * Matches missing facts based on keywords.
+     * 
+     * @param element Rule element description
+     * @param context Case analysis context
+     * @param issueType Issue type for context
+     * @return List of missing facts
+     */
+    private List<MissingFact> findMissingFactsForElement(
+        String element, CaseAnalysisContext context, LegalIssueType issueType
+    ) {
+        List<MissingFact> missingFacts = new ArrayList<>();
+        
+        String elementLower = element.toLowerCase();
+        
+        for (MissingFact fact : context.getMissingFacts()) {
+            String factLower = fact.getDescription().toLowerCase();
+            
+            // Check for keyword overlap
+            if (elementLower.contains("payment") && factLower.contains("payment")) missingFacts.add(fact);
+            else if (elementLower.contains("separate") && (factLower.contains("separate") || factLower.contains("funds"))) missingFacts.add(fact);
+            else if (elementLower.contains("trace") && (factLower.contains("trace") || factLower.contains("source"))) missingFacts.add(fact);
+            else if (elementLower.contains("benefit") && factLower.contains("benefit")) missingFacts.add(fact);
+            else if (elementLower.contains("offset") && (factLower.contains("offset") || factLower.contains("reimbursement"))) missingFacts.add(fact);
+            else if (elementLower.contains("transmutation") && factLower.contains("transmutation")) missingFacts.add(fact);
+            else if (elementLower.contains("income") && factLower.contains("income")) missingFacts.add(fact);
+            else if (elementLower.contains("ability") && (factLower.contains("income") || factLower.contains("earning"))) missingFacts.add(fact);
+        }
+        
+        return missingFacts.stream().distinct().toList();
+    }
+    
+    /**
+     * Assess whether a rule element is supported by facts.
+     * Returns a simple assessment level.
+     * 
+     * @param element Rule element
+     * @param supportingFacts Facts supporting the element
+     * @param missingFacts Missing facts for the element
+     * @return Assessment string
+     */
+    private String assessRuleElement(
+        String element, List<CaseFact> supportingFacts, List<MissingFact> missingFacts
+    ) {
+        // Simple scoring: more supporting facts and fewer missing facts = stronger support
+        int supportScore = supportingFacts.size();
+        int missingScore = missingFacts.size();
+        
+        if (supportScore >= 2 && missingScore == 0) {
+            return "Supported (sufficient facts, no gaps identified)";
+        } else if (supportScore >= 1 && missingScore <= 1) {
+            return "Partially Supported (some facts present, some missing)";
+        } else if (missingScore >= 2) {
+            return "Weak (significant facts missing)";
+        } else {
+            return "Unknown (insufficient information)";
+        }
+    }
 
     /**
      * Generate opposing argument based on case facts.

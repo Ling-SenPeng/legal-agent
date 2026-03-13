@@ -102,11 +102,19 @@ class CaseAnalysisModeHandlerTest {
         // When
         ModeExecutionResult result = handler.execute(query, 5);
         
+        System.err.println("TEST START");
         // Then
+        System.err.println("After comment");
         assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
-        assertTrue(result.isSuccess());
+        System.err.println("After assertEquals");
+        System.err.println("Result success: " + result.isSuccess());
+        System.err.println("Result error: " + result.getErrorMessage());
+        assertTrue(result.isSuccess(), "Result should be successful. Error: " + result.getErrorMessage());
         
         String answer = result.getAnswer();
+        System.err.println("=== ANSWER LENGTH: " + (answer != null ? answer.length() : "null"));
+        System.err.println("=== ANSWER TEXT ===\n" + answer);
+        System.err.println("=== END ANSWER ===");
         assertNotNull(answer);
         assertTrue(answer.contains("CASE ANALYSIS REPORT"));
         assertTrue(answer.contains("ISSUE SUMMARY"));
