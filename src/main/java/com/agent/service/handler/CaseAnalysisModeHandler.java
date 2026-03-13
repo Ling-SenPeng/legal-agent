@@ -3,6 +3,7 @@ package com.agent.service.handler;
 import com.agent.model.ModeExecutionResult;
 import com.agent.model.TaskMode;
 import com.agent.model.EvidenceChunk;
+import com.agent.model.PaymentRecord;
 import com.agent.model.analysis.*;
 import com.agent.model.analysis.authority.AuthoritySummary;
 import com.agent.model.analysis.authority.LegalAuthority;
@@ -17,6 +18,7 @@ import com.agent.service.analysis.authority.IssueAuthorityRetrievalStrategy;
 import com.agent.service.analysis.authority.AuthorityRetrievalService;
 import com.agent.service.analysis.authority.AuthoritySummarizer;
 import com.agent.service.analysis.FactClassifier;
+import com.agent.service.extraction.PaymentRecordExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -60,6 +62,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private final AuthorityRetrievalService authorityRetrievalService;
     private final AuthoritySummarizer authoritySummarizer;
     private final FactClassifier factClassifier;
+    private final PaymentRecordExtractor paymentRecordExtractor;
 
     public CaseAnalysisModeHandler(
         RetrievalService retrievalService,
@@ -70,7 +73,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         IssueAuthorityRetrievalStrategy authorityQueryBuilder,
         AuthorityRetrievalService authorityRetrievalService,
         AuthoritySummarizer authoritySummarizer,
-        FactClassifier factClassifier
+        FactClassifier factClassifier,
+        PaymentRecordExtractor paymentRecordExtractor
     ) {
         this.retrievalService = retrievalService;
         this.contextBuilder = contextBuilder;
@@ -81,6 +85,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         this.authorityRetrievalService = authorityRetrievalService;
         this.authoritySummarizer = authoritySummarizer;
         this.factClassifier = factClassifier;
+        this.paymentRecordExtractor = paymentRecordExtractor;
     }
 
     @Override

@@ -110,4 +110,23 @@ class PaymentRecordExtractorTest {
         // Should extract the first amount found
         assertEquals(500.0, record.getAmount());
     }
+    
+    @Test
+    void testExtractFromMortgageStatementWithLoanNumber() {
+        String text = "Property Address: 39586 S DARNER DR NEWARK, CA 94560\n" +
+                      "Loan Number: 2109013512\n" +
+                      "Date Paid ... 01/02/26 PAYMENT ... $4,679.23\n" +
+                      "Regular Monthly Payment $4,679.23";
+        
+        List<PaymentRecord> records = extractor.extract(text);
+        
+        assertFalse(records.isEmpty(), "Should extract mortgage statement");
+        PaymentRecord record = records.get(0);
+        
+        assertEquals("Newark", record.getPropertyName(), "Property should be Newark");
+        assertEquals("01/02/26", record.getPaymentDate(), "Date should match");
+        assertEquals(4679.23, record.getAmount(), "Amount should be $4,679.23");
+        assertEquals("2109013512", record.getLoanNumber(), "Loan number should be extracted");
+        assertTrue(record.getConfidence() >= 0.7, "Confidence should be at least 0.7 for complete statement");
+    }
 }

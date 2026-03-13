@@ -9,7 +9,7 @@ public class PaymentRecord {
     private final String propertyName;
     private final String paymentDate;
     private final Double amount;
-    private final String accountHolder;
+    private final String loanNumber;
     private final String sourceText;
     private final String sourceDocument;
     private final double confidence;
@@ -18,7 +18,7 @@ public class PaymentRecord {
         String propertyName,
         String paymentDate,
         Double amount,
-        String accountHolder,
+        String loanNumber,
         String sourceText,
         String sourceDocument,
         double confidence
@@ -26,7 +26,7 @@ public class PaymentRecord {
         this.propertyName = propertyName;
         this.paymentDate = paymentDate;
         this.amount = amount;
-        this.accountHolder = accountHolder;
+        this.loanNumber = loanNumber;
         this.sourceText = sourceText;
         this.sourceDocument = sourceDocument;
         this.confidence = confidence;
@@ -44,8 +44,8 @@ public class PaymentRecord {
         return amount;
     }
 
-    public String getAccountHolder() {
-        return accountHolder;
+    public String getLoanNumber() {
+        return loanNumber;
     }
 
     public String getSourceText() {
@@ -66,6 +66,7 @@ public class PaymentRecord {
                 "propertyName='" + propertyName + '\'' +
                 ", paymentDate='" + paymentDate + '\'' +
                 ", amount=" + amount +
+                ", loanNumber='" + loanNumber + '\'' +
                 ", confidence=" + confidence +
                 '}';
     }

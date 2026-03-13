@@ -13,6 +13,7 @@ import com.agent.service.analysis.CaseAnalysisQueryCleaner;
 import com.agent.service.analysis.CaseAnalysisRetrievalQueryBuilder;
 import com.agent.service.analysis.CaseIssueExtractor;
 import com.agent.service.analysis.FactClassifier;
+import com.agent.service.extraction.PaymentRecordExtractor;
 import com.agent.service.analysis.authority.IssueAuthorityRetrievalStrategy;
 import com.agent.service.analysis.authority.AuthorityRetrievalService;
 import com.agent.service.analysis.authority.AuthoritySummarizer;
@@ -54,6 +55,7 @@ class CaseAnalysisModeHandlerTest {
         var realAuthorityRetrievalService = new AuthorityRetrievalService(java.util.Optional.empty());
         var realAuthoritySummarizer = new AuthoritySummarizer();
         var testFactClassifier = new TestFactClassifier();
+        var realPaymentRecordExtractor = new com.agent.service.extraction.PaymentRecordExtractor();
         
         handler = new CaseAnalysisModeHandler(
             testRetrievalService, 
@@ -64,7 +66,8 @@ class CaseAnalysisModeHandlerTest {
             realAuthorityQueryBuilder,
             realAuthorityRetrievalService,
             realAuthoritySummarizer,
-            testFactClassifier
+            testFactClassifier,
+            realPaymentRecordExtractor
         );
     }
 

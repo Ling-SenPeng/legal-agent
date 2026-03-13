@@ -81,12 +81,15 @@ public class PaymentRecordExtractor {
         // Extract property name (last location reference or "last word after address keywords")
         String propertyName = extractPropertyName(text);
         
+        // Extract loan number
+        String loanNumber = extractLoanNumber(text);
+        
         // Calculate confidence
         double confidence = calculateConfidence(hasPaymentSignal, hasMortgageSignal, paymentDate != null, amount != null);
         
         // Log extraction
-        logger.debug("[PAYMENT_RECORD_EXTRACTOR] detected_payment=true date={} amount={} confidence={}",
-            paymentDate, amount, confidence);
+        logger.debug("[PAYMENT_RECORD_EXTRACTOR] detected_payment=true date={} amount={} loanNumber={} confidence={}",
+            paymentDate, amount, loanNumber, confidence);
         
         // Create record if we have meaningful signal
         if (amount != null || paymentDate != null) {
@@ -94,7 +97,7 @@ public class PaymentRecordExtractor {
                 propertyName,
                 paymentDate,
                 amount,
-                null,  // accountHolder not extracted
+                loanNumber,
                 text,  // sourceText
                 null,  // sourceDocument not provided
                 confidence
@@ -146,19 +149,24 @@ public class PaymentRecordExtractor {
     
     /**
      * Extract property name/address from the text.
-     * Looks for city name before state abbreviation (e.g., "Newark CA").
+     * Looks for city name before state abbreviation (e.g., "Newark CA" or "NEWARK CA").
      */
     private String extractPropertyName(String text) {
         String lowerText = text.toLowerCase();
         
         // Look for state abbreviations at the end of the line or near "CA"
-        // Pattern: word CA or word CA,
+        // Pattern: word CA or word CA, - handles both mixed case and all caps
         java.util.regex.Pattern statePattern = java.util.regex.Pattern.compile(
-            "\\b([A-Z][a-z]+)\\s+(CA|California)\\b"
+            "\\b([A-Z][A-Za-z]*)\\s*[,]?\\s*(CA|California)\\b"
         );
         java.util.regex.Matcher matcher = statePattern.matcher(text);
         if (matcher.find()) {
-            return matcher.group(1);  // Return the word before CA
+            String candidate = matcher.group(1);
+            // Skip single letters and numbers
+            if (candidate.length() > 1 && !candidate.matches("^[0-9]+.*")) {
+                // Normalize to title case (first letter uppercase, rest lowercase)
+                return candidate.substring(0, 1).toUpperCase() + candidate.substring(1).toLowerCase();
+            }
         }
         
         // Fallback: look for common address keywords
@@ -173,15 +181,35 @@ public class PaymentRecordExtractor {
             int pos = lowerText.indexOf(keyword);
             if (pos != -1) {
                 String afterKeyword = text.substring(pos + keyword.length()).trim();
-                // Extract words and find the first city-like word
+                // Extract words and find the first city-like word (longer than 2 chars, not numbers)
                 String[] words = afterKeyword.split("[,\\s]+");
                 for (String word : words) {
-                    // Look for capitalized word that's not a number
-                    if (!word.isEmpty() && Character.isUpperCase(word.charAt(0)) && !word.matches("^[0-9]+.*")) {
-                        return word;
+                    // Look for capitalized word that's not a number and is longer than single letter
+                    if (!word.isEmpty() && word.length() > 2 && Character.isUpperCase(word.charAt(0)) && !word.matches("^[0-9]+.*")) {
+                        // Normalize to title case
+                        return word.substring(0, 1).toUpperCase() + word.substring(1).toLowerCase();
                     }
                 }
             }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Extract loan number from text.
+     * Looks for patterns like "Loan Number: 2109013512" or "Loan#: 2109013512".
+     */
+    private String extractLoanNumber(String text) {
+        String lowerText = text.toLowerCase();
+        
+        // Pattern: "loan number:" or "loan #:" or "loan:" followed by digits
+        java.util.regex.Pattern loanPattern = java.util.regex.Pattern.compile(
+            "(?:loan\\s+number|loan\\s*#|loan)\\s*:?\\s*([0-9]+)"
+        );
+        java.util.regex.Matcher matcher = loanPattern.matcher(lowerText);
+        if (matcher.find()) {
+            return matcher.group(1);
         }
         
         return null;
