@@ -66,6 +66,10 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     
     // ThreadLocal to store evidence chunks during execution for access in nested methods
     private final ThreadLocal<List<EvidenceChunk>> currentEvidenceChunks = new ThreadLocal<>();
+    
+    // ThreadLocal to store Date of Separation (DOS) for filtering payment records
+    // Format: "MM/DD/YYYY" or "MM/DD/YY" (same as payment dates in records)
+    private final ThreadLocal<String> currentDateOfSeparation = new ThreadLocal<>();
 
     public CaseAnalysisModeHandler(
         RetrievalService retrievalService,
@@ -232,7 +236,31 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         } finally {
             // Clean up ThreadLocal to prevent memory leaks
             currentEvidenceChunks.remove();
+            currentDateOfSeparation.remove();
         }
+    }
+    
+    /**
+     * Set the Date of Separation (DOS) for filtering reimbursement payment records.
+     * Format: "MM/DD/YYYY" or "MM/DD/YY" (same as payment dates)
+     * Only payments AFTER DOS are included in post-separation reimbursement evidence.
+     * 
+     * @param dateOfSeparation DOS string in format MM/DD/YYYY or MM/DD/YY
+     */
+    public void setDateOfSeparation(String dateOfSeparation) {
+        if (dateOfSeparation != null && !dateOfSeparation.isBlank()) {
+            currentDateOfSeparation.set(dateOfSeparation);
+            logger.debug("[DOS_FILTER] Date of Separation set to: {}", dateOfSeparation);
+        }
+    }
+    
+    /**
+     * Get the current Date of Separation.
+     * 
+     * @return DOS string or null if not set
+     */
+    public String getDateOfSeparation() {
+        return currentDateOfSeparation.get();
     }
 
     /**
@@ -1933,10 +1961,15 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * Extract PaymentRecords from evidence chunks for REIMBURSEMENT issues.
      * Filters for mortgage/payment-related chunks and extracts structured payment data.
      * 
+     * Applies DOS (Date of Separation) filtering:
+     * - Only includes payments made AFTER DOS as post-separation reimbursement evidence
+     * - Records before DOS are excluded with reason "before DOS"
+     * 
      * @return List of PaymentRecords converted to CaseFacts for rendering
      */
     private List<CaseFact> extractPaymentRecordsAsFacts() {
         List<CaseFact> paymentFacts = new ArrayList<>();
+        String dos = currentDateOfSeparation.get();
         
         List<EvidenceChunk> chunks = currentEvidenceChunks.get();
         if (chunks == null || chunks.isEmpty()) {
@@ -1969,8 +2002,20 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             // Extract PaymentRecords from this chunk
             List<PaymentRecord> records = paymentRecordExtractor.extract(chunk.text());
             
-            // Convert each PaymentRecord to a CaseFact
+            // Convert each PaymentRecord to a CaseFact, applying DOS filtering
             for (PaymentRecord record : records) {
+                // Apply DOS filtering: only include payments AFTER DOS
+                if (dos != null && !dos.isBlank()) {
+                    PaymentDateFilterResult filterResult = filterPaymentByDOS(record, dos);
+                    if (!filterResult.isIncluded()) {
+                        logger.info("[DOS_FILTER] recordDate={} dos={} decision=EXCLUDE reason={}",
+                            record.getPaymentDate(), dos, filterResult.getReason());
+                        continue;  // Skip records before DOS
+                    }
+                    logger.info("[DOS_FILTER] recordDate={} dos={} decision=INCLUDE",
+                        record.getPaymentDate(), dos);
+                }
+                
                 String factDescription = formatPaymentRecordAsFactDescription(record);
                 if (factDescription != null) {
                     CaseFact fact = new CaseFact(
@@ -1988,6 +2033,119 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         }
         
         return paymentFacts;
+    }
+    
+    /**
+     * Represents result of DOS filtering a payment record.
+     */
+    private static class PaymentDateFilterResult {
+        private final boolean included;
+        private final String reason;
+        
+        PaymentDateFilterResult(boolean included, String reason) {
+            this.included = included;
+            this.reason = reason;
+        }
+        
+        boolean isIncluded() {
+            return included;
+        }
+        
+        String getReason() {
+            return reason;
+        }
+    }
+    
+    /**
+     * Filter a payment record by Date of Separation.
+     * Only includes payments made STRICTLY AFTER DOS.
+     * 
+     * Date formats supported: "MM/DD/YYYY" and "MM/DD/YY"
+     * Comparison is numeric: 2026-01-02 > 2025-12-24
+     * 
+     * @param record The payment record to filter
+     * @param dos Date of Separation (format: MM/DD/YYYY or MM/DD/YY)
+     * @return FilterResult with inclusion decision and reason
+     */
+    private PaymentDateFilterResult filterPaymentByDOS(PaymentRecord record, String dos) {
+        String paymentDate = record.getPaymentDate();
+        
+        if (paymentDate == null || paymentDate.isBlank()) {
+            // No date to compare - cannot filter by DOS
+            return new PaymentDateFilterResult(true, "no_payment_date");
+        }
+        
+        try {
+            // Normalize dates for comparison
+            String normalizedPaymentDate = normalizeDateForComparison(paymentDate);
+            String normalizedDOS = normalizeDateForComparison(dos);
+            
+            if (normalizedPaymentDate == null || normalizedDOS == null) {
+                // Cannot parse dates - include as fallback
+                return new PaymentDateFilterResult(true, "unparseable_date");
+            }
+            
+            // Compare numerically: "YYYYMMDD" format allows direct string comparison
+            // Example: "20260102" > "20251224" is true
+            int comparison = normalizedPaymentDate.compareTo(normalizedDOS);
+            
+            if (comparison > 0) {
+                // Payment date is AFTER DOS - include
+                return new PaymentDateFilterResult(true, "after_dos");
+            } else if (comparison == 0) {
+                // Payment date equals DOS - exclude (must be strictly after)
+                return new PaymentDateFilterResult(false, "on_dos_date");
+            } else {
+                // Payment date is BEFORE DOS - exclude
+                return new PaymentDateFilterResult(false, "before_dos");
+            }
+        } catch (Exception e) {
+            logger.warn("[DOS_FILTER] Error comparing dates: recordDate={} dos={} error={}",
+                paymentDate, dos, e.getMessage());
+            return new PaymentDateFilterResult(true, "comparison_error");
+        }
+    }
+    
+    /**
+     * Normalize date strings to "YYYYMMDD" format for numeric string comparison.
+     * 
+     * Supports input formats:
+     * - "MM/DD/YYYY" → "YYYYMMDD"
+     * - "MM/DD/YY" → "YYYYMMDD" (assumes 20xx for YY < 50, 19xx for YY >= 50)
+     * 
+     * @param dateStr Date string in MM/DD/YYYY or MM/DD/YY format
+     * @return Normalized date string in YYYYMMDD format, or null if unparseable
+     */
+    private String normalizeDateForComparison(String dateStr) {
+        if (dateStr == null || dateStr.isBlank()) {
+            return null;
+        }
+        
+        String[] parts = dateStr.split("/");
+        if (parts.length != 3) {
+            return null;
+        }
+        
+        try {
+            int month = Integer.parseInt(parts[0]);
+            int day = Integer.parseInt(parts[1]);
+            int year = Integer.parseInt(parts[2]);
+            
+            // Handle 2-digit year
+            if (year < 100) {
+                year = (year < 50) ? 2000 + year : 1900 + year;
+            }
+            
+            // Validate date components
+            if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900 || year > 2100) {
+                return null;
+            }
+            
+            // Format as YYYYMMDD for string comparison
+            return String.format("%04d%02d%02d", year, month, day);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
     
     /**
