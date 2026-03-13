@@ -781,6 +781,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         // CHANGED: Get final rendered authorities BEFORE generating LEGAL RULE
         // This ensures LEGAL RULE only references authorities that actually appear
+        if (logger.isDebugEnabled()) {
+            logger.debug("\n========== CASE_ANALYSIS LEGAL RULE GENERATION START ==========");
+        }
         List<LegalAuthority> finalRenderedAuthorities = extractAndRankFinalAuthorities(context);
         
         // NEW: LEGAL RULE section integrated from final rendered authorities only
@@ -788,6 +791,10 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         answer.append("---\n");
         appendLegalRuleFromFinalAuthorities(answer, context, finalRenderedAuthorities);
         answer.append("\n");
+        
+        if (logger.isDebugEnabled()) {
+            logger.debug("========== CASE_ANALYSIS LEGAL RULE GENERATION END ==========\n");
+        }
         
         // Collect all unique authorities for deduplication across sections
         Set<String> renderedAuthorityIds = new LinkedHashSet<>();
@@ -874,6 +881,10 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         // Collect all unique authorities from all summaries
         Map<String, LegalAuthority> authorityMap = new LinkedHashMap<>();
         
+        if (logger.isDebugEnabled()) {
+            logger.debug("[CASE_ANALYSIS_RULE_GEN_START] Extracting authorities for LEGAL RULE generation");
+        }
+        
         for (AuthoritySummary summary : context.getAuthoritySummaries()) {
             for (LegalAuthority auth : summary.getAuthorities()) {
                 // Deduplicate by authorityId
@@ -885,19 +896,65 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         List<LegalAuthority> uniqueAuthorities = new ArrayList<>(authorityMap.values());
         
+        // Log all extracted authorities before ranking
+        if (logger.isDebugEnabled() && !uniqueAuthorities.isEmpty()) {
+            StringBuilder extractedLog = new StringBuilder("\nExtracted unique authorities from summaries (" + uniqueAuthorities.size() + " total):\n");
+            for (LegalAuthority auth : uniqueAuthorities) {
+                extractedLog.append(String.format("  - %s | %s | %s | score=%.3f\n",
+                    auth.getAuthorityId(),
+                    auth.getTitle(),
+                    auth.getCitation(),
+                    auth.getRelevanceScore()
+                ));
+            }
+            logger.debug(extractedLog.toString());
+        }
+        
         // Re-rank authorities by relevance to the identified issues
         if (!uniqueAuthorities.isEmpty() && !context.getIdentifiedIssues().isEmpty()) {
             CaseIssue primaryIssue = context.getIdentifiedIssues().get(0);
             uniqueAuthorities = rankAuthoritiesForIssue(primaryIssue, uniqueAuthorities);
+            
+            // Log ranked authorities
+            if (logger.isDebugEnabled()) {
+                StringBuilder rankedLog = new StringBuilder("\nRe-ranked authorities for LEGAL RULE generation (issue=" + primaryIssue.getType() + "):\n");
+                for (int i = 0; i < uniqueAuthorities.size(); i++) {
+                    LegalAuthority auth = uniqueAuthorities.get(i);
+                    double calcScore = calculateAuthorityRelevanceScore(primaryIssue, auth);
+                    rankedLog.append(String.format("  [%d] %s | %s | %s | rankScore=%.3f\n",
+                        (i + 1),
+                        auth.getAuthorityId(),
+                        auth.getTitle(),
+                        auth.getCitation(),
+                        calcScore
+                    ));
+                }
+                logger.debug(rankedLog.toString());
+            }
         } else {
             // Fallback: sort by citation if no issues
             uniqueAuthorities.sort((a, b) -> a.getCitation().compareTo(b.getCitation()));
         }
         
         // Return top 2 (or as many as available if less than 2)
-        return uniqueAuthorities.stream()
+        List<LegalAuthority> finalList = uniqueAuthorities.stream()
             .limit(2)
             .toList();
+        
+        // Log final authorities selected for LEGAL RULE
+        if (logger.isDebugEnabled()) {
+            StringBuilder finalLog = new StringBuilder("\nFinal authorities selected for LEGAL RULE (" + finalList.size() + " authorities):\n");
+            for (LegalAuthority auth : finalList) {
+                finalLog.append(String.format("  - %s | %s | %s\n",
+                    auth.getAuthorityId(),
+                    auth.getTitle(),
+                    auth.getCitation()
+                ));
+            }
+            logger.debug(finalLog.toString());
+        }
+        
+        return finalList;
     }
 
     /**
@@ -913,8 +970,15 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         CaseAnalysisContext context,
         List<LegalAuthority> finalAuthorities
     ) {
+        if (logger.isDebugEnabled()) {
+            logger.debug("\n[CASE_ANALYSIS_RULE_GEN] Building LEGAL RULE from final authorities");
+        }
+        
         if (finalAuthorities.isEmpty()) {
             answer.append("No specific legal authorities retrieved for analysis.\n");
+            if (logger.isDebugEnabled()) {
+                logger.debug("[CASE_ANALYSIS_RULE_GEN] No final authorities available");
+            }
         } else {
             // Build rule text from final authorities only
             StringBuilder ruleText = new StringBuilder();
@@ -936,6 +1000,14 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                         // Use the summarized rule but ensure it only references final authorities
                         String originalRule = summary.getSummarizedRule();
                         
+                        if (logger.isDebugEnabled()) {
+                            logger.debug(String.format(
+                                "\nAuthoritySummary for issue %s found.\nOriginal rule text: %s",
+                                primaryIssue.getType(),
+                                originalRule
+                            ));
+                        }
+                        
                         // Filter the rule to only reference final authorities
                         String filteredRule = filterRuleToFinalAuthorities(originalRule, finalAuthorities);
                         ruleText.append(filteredRule);
@@ -946,12 +1018,22 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             
             // If no matching summary or rule is empty, create a simple rule from authority titles
             if (ruleText.length() == 0) {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("\n[CASE_ANALYSIS_RULE_GEN] No matching summary or rule is empty. Generating generic rule.");
+                }
                 ruleText.append("Based on ");
                 for (int i = 0; i < citations.size(); i++) {
                     if (i > 0) ruleText.append(" and ");
                     ruleText.append(citations.get(i));
                 }
                 ruleText.append(", legal principles apply to this issue.\n");
+            }
+            
+            if (logger.isDebugEnabled()) {
+                logger.debug(String.format(
+                    "\n[CASE_ANALYSIS_RULE_GEN_FINAL]\nFinal LEGAL RULE generated:\n%s\n[CASE_ANALYSIS_RULE_GEN_END]",
+                    ruleText.toString()
+                ));
             }
             
             answer.append(ruleText.toString());
@@ -985,18 +1067,45 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             }
         }
         
+        if (logger.isDebugEnabled()) {
+            StringBuilder filterLog = new StringBuilder("\n[CASE_ANALYSIS_RULE_FILTER] Filtering rule text to match final authorities.\n");
+            filterLog.append("Final authority titles (for matching):\n");
+            for (String title : finalTitles) {
+                filterLog.append("  - ").append(title).append("\n");
+            }
+            filterLog.append("Final authority citations (for matching):\n");
+            for (String citation : finalCitations) {
+                filterLog.append("  - ").append(citation).append("\n");
+            }
+            logger.debug(filterLog.toString());
+        }
+        
         // The original rule should already mention the final authorities
-        // If not, just return it as-is (the summary was generated with different authorities)
+        // If not, it was generated with different authorities
         String ruleLower = originalRule.toLowerCase();
         boolean mentionsFinalAuthority = finalTitles.stream()
             .anyMatch(ruleLower::contains) ||
             finalCitations.stream()
             .anyMatch(ruleLower::contains);
         
+        if (logger.isDebugEnabled()) {
+            logger.debug(String.format(
+                "\n[CASE_ANALYSIS_RULE_FILTER_RESULT] Rule mentions final authorities? %s\n",
+                mentionsFinalAuthority
+            ));
+        }
+        
         if (mentionsFinalAuthority) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("[CASE_ANALYSIS_RULE_FILTER] Decision: Rule MATCHES final authorities. Using original rule.");
+            }
             return originalRule;
         } else {
             // Rule doesn't match final authorities - create new rule from scratch
+            if (logger.isDebugEnabled()) {
+                logger.debug("[CASE_ANALYSIS_RULE_FILTER] Decision: Rule DOES NOT MATCH final authorities. " +
+                    "Rule was generated with different authority set. Generating new rule from final authorities.");
+            }
             return createRuleFromFinalAuthorities(finalAuthorities);
         }
     }
@@ -1011,6 +1120,18 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private String createRuleFromFinalAuthorities(List<LegalAuthority> finalAuthorities) {
         if (finalAuthorities.isEmpty()) {
             return "No specific legal rule available.\n";
+        }
+        
+        if (logger.isDebugEnabled()) {
+            StringBuilder fallbackLog = new StringBuilder("\n[CASE_ANALYSIS_RULE_FALLBACK] Creating generic fallback rule from final authorities:\n");
+            for (LegalAuthority auth : finalAuthorities) {
+                fallbackLog.append(String.format("  - %s | %s | %s\n",
+                    auth.getAuthorityId(),
+                    auth.getTitle(),
+                    auth.getCitation()
+                ));
+            }
+            logger.debug(fallbackLog.toString());
         }
         
         // Just create a generic rule statement without repeating authority names
