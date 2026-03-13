@@ -1888,7 +1888,7 @@ class CaseAnalysisModeHandlerTest {
 
     private EvidenceChunk createTestChunk(String text, Long docId, Integer pageNo, String pageRef) {
         return new EvidenceChunk(
-            1L + pageNo, docId, pageNo, pageNo, pageNo, text, 0.8,
+            1L + pageNo, docId, "test.pdf", pageNo, pageNo, pageNo, text, 0.8,
             "[CIT doc=" + docId + " p=" + pageRef + "]", 0.8, 0.7, 0.75
         );
     }

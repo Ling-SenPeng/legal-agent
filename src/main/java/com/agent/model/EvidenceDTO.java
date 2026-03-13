@@ -9,6 +9,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  * Simplified version of EvidenceChunk focused on response payload.
  */
 public record EvidenceDTO(
+    @JsonProperty("filename")
+    String filename,
+    
     @JsonProperty("sourceDocument")
     String sourceDocument,
     
@@ -34,6 +37,7 @@ public record EvidenceDTO(
     public static EvidenceDTO fromChunk(EvidenceChunk chunk, double score) {
         String docName = chunk.citations() != null ? chunk.citations() : String.format("Document %d", chunk.docId());
         return new EvidenceDTO(
+            chunk.filename(),
             docName,
             chunk.pageNo() != null ? chunk.pageNo() : 0,
             chunk.chunkId() != null ? chunk.chunkId().intValue() : 0,

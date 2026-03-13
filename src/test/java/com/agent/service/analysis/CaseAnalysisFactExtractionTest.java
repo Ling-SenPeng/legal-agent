@@ -410,6 +410,7 @@ class CaseAnalysisFactExtractionTest {
         return new EvidenceChunk(
             1L + pageNo,  // chunkId
             docId,
+            "test.pdf",   // filename
             pageNo,
             pageNo,
             pageNo,

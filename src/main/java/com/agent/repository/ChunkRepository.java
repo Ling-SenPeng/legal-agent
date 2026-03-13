@@ -30,12 +30,14 @@ public class ChunkRepository {
             SELECT 
                 c.id as chunk_id,
                 c.doc_id,
+                d.file_name as filename,
                 c.page_no,
                 c.page_no as page_start,
                 c.page_no as page_end,
                 c.text,
                 (1.0 - (c.embedding <=> ?::vector)) as vector_score
             FROM pdf_chunks c
+            JOIN pdf_documents d ON c.doc_id = d.id
             WHERE c.embedding IS NOT NULL
             ORDER BY c.embedding <=> ?::vector
             LIMIT ?
@@ -46,6 +48,7 @@ public class ChunkRepository {
             (rs, rowNum) -> new EvidenceChunk(
                 rs.getLong("chunk_id"),
                 rs.getLong("doc_id"),
+                rs.getString("filename"),
                 rs.getInt("page_no"),
                 rs.getInt("page_start"),
                 rs.getInt("page_end"),
@@ -75,12 +78,14 @@ public class ChunkRepository {
             SELECT 
                 c.id as chunk_id,
                 c.doc_id,
+                d.file_name as filename,
                 c.page_no,
                 c.page_no as page_start,
                 c.page_no as page_end,
                 c.text,
                 ts_rank_cd(c.ts, websearch_to_tsquery('english', ?)) as keyword_score
             FROM pdf_chunks c
+            JOIN pdf_documents d ON c.doc_id = d.id
             WHERE c.ts @@ websearch_to_tsquery('english', ?)
             ORDER BY keyword_score DESC
             LIMIT ?
@@ -91,6 +96,7 @@ public class ChunkRepository {
             (rs, rowNum) -> new EvidenceChunk(
                 rs.getLong("chunk_id"),
                 rs.getLong("doc_id"),
+                rs.getString("filename"),
                 rs.getInt("page_no"),
                 rs.getInt("page_start"),
                 rs.getInt("page_end"),
@@ -120,12 +126,14 @@ public class ChunkRepository {
             SELECT 
                 c.id as chunk_id,
                 c.doc_id,
+                d.file_name as filename,
                 c.page_no,
                 c.page_no as page_start,
                 c.page_no as page_end,
                 c.text,
                 (1 - (c.embedding <-> ?::vector)) as similarity
             FROM pdf_chunks c
+            JOIN pdf_documents d ON c.doc_id = d.id
             WHERE c.embedding IS NOT NULL
             ORDER BY c.embedding <-> ?::vector
             LIMIT ?
@@ -136,6 +144,7 @@ public class ChunkRepository {
             (rs, rowNum) -> new EvidenceChunk(
                 rs.getLong("chunk_id"),
                 rs.getLong("doc_id"),
+                rs.getString("filename"),
                 rs.getInt("page_no"),
                 rs.getInt("page_start"),
                 rs.getInt("page_end"),
@@ -160,12 +169,14 @@ public class ChunkRepository {
             SELECT 
                 c.id as chunk_id,
                 c.doc_id,
+                d.file_name as filename,
                 c.page_no,
                 c.page_no as page_start,
                 c.page_no as page_end,
                 c.text,
                 0.0 as similarity
             FROM pdf_chunks c
+            JOIN pdf_documents d ON c.doc_id = d.id
             WHERE c.doc_id = ? AND c.page_no >= ? AND c.page_no <= ?
             ORDER BY c.page_no, c.chunk_index
             """;
@@ -175,6 +186,7 @@ public class ChunkRepository {
             (rs, rowNum) -> new EvidenceChunk(
                 rs.getLong("chunk_id"),
                 rs.getLong("doc_id"),
+                rs.getString("filename"),
                 rs.getInt("page_no"),
                 rs.getInt("page_start"),
                 rs.getInt("page_end"),
@@ -203,12 +215,14 @@ public class ChunkRepository {
             SELECT 
                 c.id as chunk_id,
                 c.doc_id,
+                d.file_name as filename,
                 c.page_no,
                 c.page_no as page_start,
                 c.page_no as page_end,
                 c.text,
                 0.0 as similarity
             FROM pdf_chunks c
+            JOIN pdf_documents d ON c.doc_id = d.id
             WHERE c.id = ?
             """;
 
@@ -217,6 +231,7 @@ public class ChunkRepository {
             (rs, rowNum) -> new EvidenceChunk(
                 rs.getLong("chunk_id"),
                 rs.getLong("doc_id"),
+                rs.getString("filename"),
                 rs.getInt("page_no"),
                 rs.getInt("page_start"),
                 rs.getInt("page_end"),

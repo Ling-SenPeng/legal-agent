@@ -36,6 +36,7 @@ public class RetrievalDebugSnapshot {
     public static class ResultPreview {
         public long chunkId;
         public Long docId;
+        public String filename;  // Source PDF filename
         public Integer pageNo;
         public Double keywordScore;
         public Double vectorScore;
@@ -44,11 +45,12 @@ public class RetrievalDebugSnapshot {
         public String matchedByKeywordQuery;
         public boolean exactPhraseMatched;
 
-        public ResultPreview(long chunkId, Long docId, Integer pageNo, Double keywordScore,
+        public ResultPreview(long chunkId, Long docId, String filename, Integer pageNo, Double keywordScore,
                            Double vectorScore, Double finalScore, String textPreview,
                            String matchedByKeywordQuery, boolean exactPhraseMatched) {
             this.chunkId = chunkId;
             this.docId = docId;
+            this.filename = filename;
             this.pageNo = pageNo;
             this.keywordScore = keywordScore;
             this.vectorScore = vectorScore;

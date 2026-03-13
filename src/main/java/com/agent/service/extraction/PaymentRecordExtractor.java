@@ -210,7 +210,10 @@ public class PaymentRecordExtractor {
      * Extracts city name from address line: "Property Address: 39586 S DARNER DR NEWARK, CA 94560" → "Newark"
      */
     private String extractPropertyNameAnchored(String text) {
-        Matcher matcher = PROPERTY_ADDRESS_PATTERN.matcher(text);
+        // Normalize text first to handle PDF line breaks and whitespace
+        String normalizedText = normalizeAddressText(text);
+        
+        Matcher matcher = PROPERTY_ADDRESS_PATTERN.matcher(normalizedText);
         if (!matcher.find()) {
             return null;
         }
@@ -343,6 +346,38 @@ public class PaymentRecordExtractor {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+    
+    /**
+     * Normalize PDF-extracted address text by handling line breaks and collapsing whitespace.
+     * 
+     * Converts: "39586 S DARNER DR\rNEWARK, CA 94560"
+     * Into:     "39586 S DARNER DR NEWARK, CA 94560"
+     * 
+     * Steps:
+     * 1. Replace \r and \n with spaces
+     * 2. Collapse consecutive whitespace to single space
+     * 3. Trim leading/trailing whitespace
+     * 4. Convert to uppercase for consistent matching
+     * 
+     * @param text The raw address text from PDF extraction
+     * @return Normalized address text ready for pattern matching
+     */
+    private String normalizeAddressText(String text) {
+        if (text == null || text.isBlank()) {
+            return text;
+        }
+        
+        // Replace carriage returns and newlines with spaces
+        String normalized = text.replace("\r", " ").replace("\n", " ");
+        
+        // Collapse consecutive whitespace into single space
+        normalized = normalized.replaceAll("\\s+", " ");
+        
+        // Trim and uppercase for matching
+        normalized = normalized.trim().toUpperCase();
+        
+        return normalized;
     }
     
     /**

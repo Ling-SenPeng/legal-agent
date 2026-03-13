@@ -2026,6 +2026,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             }
             
             // Extract PaymentRecords from this chunk
+            logger.debug("[PAYMENT_RECORD_EXTRACTOR] extract: {" + chunk + "}");
             List<PaymentRecord> records = paymentRecordExtractor.extract(chunk.text());
             
             // Convert each PaymentRecord to a CaseFact, applying DOS filtering

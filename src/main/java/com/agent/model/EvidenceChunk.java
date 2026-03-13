@@ -13,6 +13,9 @@ public record EvidenceChunk(
     @JsonProperty("docId")
     Long docId,
     
+    @JsonProperty("filename")
+    String filename,  // Source PDF filename for identification and grouping
+    
     @JsonProperty("pageNo")
     Integer pageNo,
     

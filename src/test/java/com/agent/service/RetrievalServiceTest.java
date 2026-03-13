@@ -239,6 +239,7 @@ class RetrievalServiceTest {
         return new EvidenceChunk(
             chunkId,
             docId,
+            "test.pdf",
             pageNo,
             pageNo,
             pageNo,

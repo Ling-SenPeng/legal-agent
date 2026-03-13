@@ -175,6 +175,7 @@ class HybridSearchTest {
         EvidenceChunk chunk = new EvidenceChunk(
             5L,              // chunkId
             1L,              // docId
+            "test.pdf",      // filename
             10,              // pageNo
             10,              // pageStart
             10,              // pageEnd
@@ -220,7 +221,7 @@ class HybridSearchTest {
     private EvidenceChunk createChunk(Long chunkId, Long docId, Integer pageNo, String text,
                                       Double vectorScore, Double keywordScore) {
         return new EvidenceChunk(
-            chunkId, docId, pageNo, pageNo, pageNo, text,
+            chunkId, docId, "test.pdf", pageNo, pageNo, pageNo, text,
             null,  // similarity
             "",    // citations
             vectorScore,
@@ -244,6 +245,7 @@ class HybridSearchTest {
                 EvidenceChunk mergedChunk = new EvidenceChunk(
                     existing.chunkId(),
                     existing.docId(),
+                    existing.filename(),
                     existing.pageNo(),
                     existing.pageStart(),
                     existing.pageEnd(),
@@ -313,6 +315,7 @@ class HybridSearchTest {
                 return new EvidenceChunk(
                     chunk.chunkId(),
                     chunk.docId(),
+                    chunk.filename(),
                     chunk.pageNo(),
                     chunk.pageStart(),
                     chunk.pageEnd(),

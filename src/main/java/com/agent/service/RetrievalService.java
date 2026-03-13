@@ -221,6 +221,7 @@ public class RetrievalService {
             .map(chunk -> new EvidenceChunk(
                 chunk.chunkId(),
                 chunk.docId(),
+                chunk.filename(),
                 chunk.pageNo(),
                 chunk.pageStart(),
                 chunk.pageEnd(),
@@ -235,8 +236,10 @@ public class RetrievalService {
         
         logger.info("  Final ranked results: {} chunks (limit: {})", finalResults.size(), topK);
         if (!finalResults.isEmpty()) {
-            logger.info("  Top result - chunk: {}, vector: {}, keyword: {}, final: {}",
+            logger.info("  Top result - chunk: {}, file: {}, page: {}, vector: {}, keyword: {}, final: {}",
                     finalResults.get(0).chunkId(),
+                    finalResults.get(0).filename(),
+                    finalResults.get(0).pageNo(),
                     String.format("%.4f", finalResults.get(0).vectorScore() != null ? finalResults.get(0).vectorScore() : 0),
                     String.format("%.4f", finalResults.get(0).keywordScore() != null ? finalResults.get(0).keywordScore() : 0),
                     String.format("%.4f", finalResults.get(0).finalScore()));
@@ -293,6 +296,7 @@ public class RetrievalService {
             .map(chunk -> new EvidenceChunk(
                 chunk.chunkId(),
                 chunk.docId(),
+                chunk.filename(),
                 chunk.pageNo(),
                 chunk.pageStart(),
                 chunk.pageEnd(),
@@ -428,6 +432,7 @@ public class RetrievalService {
                 EvidenceChunk mergedChunk = new EvidenceChunk(
                     existing.chunkId(),
                     existing.docId(),
+                    existing.filename(),
                     existing.pageNo(),
                     existing.pageStart(),
                     existing.pageEnd(),
@@ -504,6 +509,7 @@ public class RetrievalService {
                 return new EvidenceChunk(
                     chunk.chunkId(),
                     chunk.docId(),
+                    chunk.filename(),
                     chunk.pageNo(),
                     chunk.pageStart(),
                     chunk.pageEnd(),
@@ -657,6 +663,7 @@ public class RetrievalService {
             .map(ch -> new RetrievalDebugSnapshot.ResultPreview(
                 ch.chunkId(),
                 ch.docId(),
+                ch.filename(),
                 ch.pageNo(),
                 ch.keywordScore(),
                 ch.vectorScore(),
@@ -692,9 +699,10 @@ public class RetrievalService {
             logger.debug("[RETRIEVAL_CHUNKS] Top merged chunks:");
             for (int i = 0; i < snapshot.getTopResults().size(); i++) {
                 RetrievalDebugSnapshot.ResultPreview preview = snapshot.getTopResults().get(i);
-                logger.debug("  [{}] chunk_id={} page={} key_score={} vec_score={} final_score={} text=\"{}\"",
+                logger.debug("  [{}] chunk_id={} file={} page={} key_score={} vec_score={} final_score={} text=\"{}\"",
                     (i + 1),
                     preview.chunkId,
+                    preview.filename,
                     preview.pageNo,
                     formatScore(preview.keywordScore),
                     formatScore(preview.vectorScore),
@@ -738,6 +746,36 @@ public class RetrievalService {
      */
     private String formatCitation(Long docId, Long chunkId, Integer pageNo) {
         return String.format("[CIT doc=%d chunk=%d p=%d-%d]", docId, chunkId, pageNo, pageNo);
+    }
+
+    /**
+     * Group chunks by filename for future chunk-merging or neighbor expansion operations.
+     * Useful for retrieving related chunks from the same document.
+     * 
+     * @param chunks List of evidence chunks
+     * @return Map of filename -> list of chunks from that file, ordered by page number
+     */
+    public Map<String, List<EvidenceChunk>> groupChunksByFilename(List<EvidenceChunk> chunks) {
+        return chunks.stream()
+            .filter(ch -> ch.filename() != null)
+            .collect(java.util.stream.Collectors.groupingBy(
+                EvidenceChunk::filename,
+                java.util.stream.Collectors.collectingAndThen(
+                    java.util.stream.Collectors.toList(),
+                    list -> list.stream()
+                        .sorted((a, b) -> {
+                            // Sort by page number, then by chunk ID
+                            int pageCompare = Integer.compare(
+                                a.pageNo() != null ? a.pageNo() : 0,
+                                b.pageNo() != null ? b.pageNo() : 0
+                            );
+                            return pageCompare != 0 ? pageCompare :
+                                Long.compare(a.chunkId() != null ? a.chunkId() : 0,
+                                           b.chunkId() != null ? b.chunkId() : 0);
+                        })
+                        .toList()
+                )
+            ));
     }
 }
 
