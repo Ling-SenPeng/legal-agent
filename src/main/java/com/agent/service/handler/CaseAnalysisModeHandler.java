@@ -15,6 +15,8 @@ import com.agent.service.analysis.CaseAnalysisContextBuilder;
 import com.agent.service.analysis.CaseAnalysisQueryCleaner;
 import com.agent.service.analysis.CaseAnalysisRetrievalQueryBuilder;
 import com.agent.service.analysis.CaseIssueExtractor;
+import com.agent.service.analysis.PropertyAwareCaseAnalysis;
+import com.agent.service.analysis.PropertyScopeDetector;
 import com.agent.service.analysis.authority.IssueAuthorityRetrievalStrategy;
 import com.agent.service.analysis.authority.AuthorityRetrievalService;
 import com.agent.service.analysis.authority.AuthoritySummarizer;
@@ -70,12 +72,17 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private final ClaimStrengthCalculator claimStrengthCalculator;
     private final CounterArgumentFilter counterArgumentFilter;
     private final MortgageStatementParser mortgageStatementParser;
+    private final PropertyAwareCaseAnalysis propertyAwareCaseAnalysis;
+    private final PropertyScopeDetector propertyScopeDetector;
     
     // ThreadLocal to store evidence chunks during execution for access in nested methods
     private final ThreadLocal<List<EvidenceChunk>> currentEvidenceChunks = new ThreadLocal<>();
     
     // ThreadLocal to store CaseProfile (contains DOS and other case-level facts)
     private final ThreadLocal<CaseProfile> currentCaseProfile = new ThreadLocal<>();
+    
+    // ThreadLocal to store property scope detection result for access during formatting
+    private final ThreadLocal<PropertyScopeDetector.PropertyScopeResult> currentPropertyScope = new ThreadLocal<>();
 
     public CaseAnalysisModeHandler(
         RetrievalService retrievalService,
@@ -90,7 +97,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         PaymentRecordExtractor paymentRecordExtractor,
         ClaimStrengthCalculator claimStrengthCalculator,
         CounterArgumentFilter counterArgumentFilter,
-        MortgageStatementParser mortgageStatementParser
+        MortgageStatementParser mortgageStatementParser,
+        PropertyAwareCaseAnalysis propertyAwareCaseAnalysis,
+        PropertyScopeDetector propertyScopeDetector
     ) {
         this.retrievalService = retrievalService;
         this.contextBuilder = contextBuilder;
@@ -105,6 +114,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         this.claimStrengthCalculator = claimStrengthCalculator;
         this.counterArgumentFilter = counterArgumentFilter;
         this.mortgageStatementParser = mortgageStatementParser;
+        this.propertyAwareCaseAnalysis = propertyAwareCaseAnalysis;
+        this.propertyScopeDetector = propertyScopeDetector;
     }
 
     @Override
@@ -181,6 +192,17 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             logger.info("[CASE_ANALYSIS] Retrieved and merged {} evidence chunks from {} queries",
                 mergedEvidenceChunks.size(), retrievalQueries.size());
             
+            // ===== PROPERTY SCOPE DETECTION PHASE =====
+            
+            // Step 4.5: Detect property scope and attribute facts to properties
+            logger.debug("[CASE_ANALYSIS] Step 4.5: Detecting property scope for ambiguity prevention");
+            PropertyScopeDetector.PropertyScopeResult scopeResult = 
+                propertyScopeDetector.detectPropertyScope(query, mergedEvidenceChunks);
+            logger.info("[CASE_ANALYSIS] Property scope detected: {}", scopeResult);
+            
+            // Store scope result for access during answer formatting
+            currentPropertyScope.set(scopeResult);
+            
             // ===== ANALYSIS PHASE =====
             
             // Step 5: Retrieve and summarize legal authorities for each issue
@@ -249,6 +271,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             // Clean up ThreadLocal to prevent memory leaks
             currentEvidenceChunks.remove();
             currentCaseProfile.remove();
+            currentPropertyScope.remove();
         }
     }
     
@@ -841,6 +864,24 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                     issue.getConfidence() * 100));
             }
             answer.append("\n");
+        }
+        
+        // Check for property scope ambiguity and add warning if needed
+        PropertyScopeDetector.PropertyScopeResult scopeResult = currentPropertyScope.get();
+        if (scopeResult != null && 
+            scopeResult.scope == PropertyScopeDetector.PropertyScope.AMBIGUOUS &&
+            scopeResult.candidateProperties.size() > 1) {
+            answer.append("⚠️  PROPERTY SCOPE AMBIGUITY\n");
+            answer.append("---\n");
+            answer.append(String.format(
+                "Your query does not specify which community property is at issue. " +
+                "Evidence contains %d properties: %s. " +
+                "The following analysis mixes facts from multiple properties, which may not be reliable.\n\n" +
+                "RECOMMENDATION: Specify the property (e.g., 'post separation mortgage reimbursement Newark') " +
+                "for a property-focused analysis.\n\n",
+                scopeResult.candidateProperties.size(),
+                String.join(", ", scopeResult.candidateProperties)
+            ));
         }
         
         // CHANGED: Get final rendered authorities BEFORE generating LEGAL RULE

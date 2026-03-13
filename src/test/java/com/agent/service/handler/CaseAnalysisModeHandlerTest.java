@@ -63,6 +63,14 @@ class CaseAnalysisModeHandlerTest {
         var realCounterArgumentFilter = new CounterArgumentFilter();
         var realMortgageStatementParser = new MortgageStatementParser();
         
+        // Create mock property-aware analysis services
+        var propertyExtractionService = new com.agent.service.analysis.PropertyExtractionService();
+        var propertyScopeDetector = new com.agent.service.analysis.PropertyScopeDetector();
+        var propertyAwareCaseAnalysis = new com.agent.service.analysis.PropertyAwareCaseAnalysis(
+            propertyScopeDetector,
+            propertyExtractionService
+        );
+        
         handler = new CaseAnalysisModeHandler(
             testRetrievalService, 
             testContextBuilder,
@@ -76,7 +84,9 @@ class CaseAnalysisModeHandlerTest {
             realPaymentRecordExtractor,
             realClaimStrengthCalculator,
             realCounterArgumentFilter,
-            realMortgageStatementParser
+            realMortgageStatementParser,
+            propertyAwareCaseAnalysis,
+            propertyScopeDetector
         );
     }
 
