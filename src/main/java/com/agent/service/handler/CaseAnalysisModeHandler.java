@@ -804,7 +804,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         answer.append("---\n");
         appendRelevantAuthoritiesSectionWithFinal(answer, finalRenderedAuthorities, renderedAuthorityIds);
         
-        answer.append("APPLICATION SUMMARY\n");
+        answer.append("APPLICATION TO RULE\n");
         answer.append("---\n");
         appendApplicationToRuleSection(answer, context);
         
@@ -1733,8 +1733,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
 
 
     /**
-     * Append APPLICATION SUMMARY section showing rule element to fact mapping.
+     * Append APPLICATION TO RULE section showing rule element to fact mapping.
      * Maps legal rule elements derived from issue type to supporting/missing facts.
+     * Filters out low-quality evidence snippets before rendering.
      * 
      * @param answer StringBuilder to append to
      * @param context Case analysis context
@@ -1761,7 +1762,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             answer.append("Element: ").append(element).append("\n");
             
             // Find supporting facts for this element
-            List<CaseFact> supportingFacts = findSupportingFactsForElement(element, context, primaryIssue.getType());
+            List<CaseFact> allSupportingFacts = findSupportingFactsForElement(element, context, primaryIssue.getType());
+            // Filter out low-quality snippets before rendering
+            List<CaseFact> supportingFacts = filterHighQualityFacts(allSupportingFacts);
             if (!supportingFacts.isEmpty()) {
                 answer.append("Supporting Facts:\n");
                 supportingFacts.stream()
@@ -1969,5 +1972,82 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         }
         
         return counterclaim.toString();
+    }
+
+    /**
+     * Filter out low-quality evidence snippets before rendering in application section.
+     * 
+     * Removes:
+     * - Very short fragments (< 15 characters unless clearly meaningful)
+     * - Numeric-only or near-numeric fragments (e.g., "23", "100")
+     * - OCR garbage / broken text patterns
+     * - Boilerplate form fragments with little legal meaning (e.g., "real and personal $")
+     * - Incomplete table rows unless they contain meaningful payment information
+     * 
+     * Prefers:
+     * - Complete sentences with proper structure
+     * - Mortgage/payment facts with amounts and context
+     * - Property addresses, dates, and payment descriptions
+     * - Explicit statements about who paid
+     * 
+     * @param facts List of case facts to filter
+     * @return Filtered list of high-quality facts suitable for rendering
+     */
+    private List<CaseFact> filterHighQualityFacts(List<CaseFact> facts) {
+        if (facts == null || facts.isEmpty()) {
+            return facts;
+        }
+        
+        return facts.stream()
+            .filter(fact -> {
+                String desc = fact.getDescription();
+                if (desc == null || desc.isEmpty()) {
+                    return false;
+                }
+                
+                // Filter 1: Length check - too short is likely noise
+                // Exception: meaningful short phrases with payment/property info
+                if (desc.length() < 15) {
+                    // Allow short facts that contain payment/property keywords
+                    if (desc.contains("$") || desc.toLowerCase().contains("paid") || 
+                        desc.toLowerCase().contains("property")) {
+                        return true;
+                    }
+                    return false;
+                }
+                
+                // Filter 2: Numeric-only or near-numeric fragments
+                String descNoWhitespace = desc.replaceAll("\\s+", "");
+                if (descNoWhitespace.matches("^[0-9,.$]+$")) {
+                    return false;  // Pure numeric/currency like "23" or "1,500"
+                }
+                
+                // Filter 3: OCR garbage patterns (excessive special chars, broken text)
+                long specialCharCount = desc.chars()
+                    .filter(c -> "!@#%^&*~`|<>?/".indexOf(c) >= 0)
+                    .count();
+                if (specialCharCount > desc.length() * 0.2) {
+                    return false;  // More than 20% special chars = likely OCR garbage
+                }
+                
+                // Filter 4: Boilerplate form fragments
+                String lowerDesc = desc.toLowerCase();
+                if ((lowerDesc.contains("real and personal") && desc.matches(".*real and personal\\s*\\$*.*")) ||
+                    lowerDesc.matches(".*\\b(and|or)\\s*\\$\\s*") ||
+                    (lowerDesc.matches("^[A-Z]\\. .*") && !lowerDesc.contains("payment") && 
+                     !lowerDesc.contains("mortgage"))) {
+                    return false;  // Generic form text with minimal legal meaning
+                }
+                
+                // Filter 5: Incomplete table rows (unless meaningful payment info)
+                if ((lowerDesc.matches("^\\|.*\\|?$") || (desc.contains(":") && desc.length() < 30)) &&
+                    !lowerDesc.contains("payment") && !lowerDesc.contains("mortgage") && 
+                    !lowerDesc.contains("paid")) {
+                    return false;  // Table fragment without context
+                }
+                
+                return true;  // Passes all filters - high quality
+            })
+            .collect(java.util.stream.Collectors.toList());
     }
 }

@@ -118,7 +118,7 @@ class CaseAnalysisModeHandlerTest {
         assertNotNull(answer);
         assertTrue(answer.contains("CASE ANALYSIS REPORT"));
         assertTrue(answer.contains("ISSUE SUMMARY"));
-        assertTrue(answer.contains("APPLICATION SUMMARY"));
+        assertTrue(answer.contains("APPLICATION TO RULE"));
         assertTrue(answer.contains("COUNTERARGUMENTS"));
         assertTrue(answer.contains("MISSING EVIDENCE"));
         assertTrue(answer.contains("TENTATIVE CONCLUSION"));
@@ -193,6 +193,77 @@ class CaseAnalysisModeHandlerTest {
         assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
         assertFalse(result.isSuccess());
         assertTrue(result.getErrorMessage().contains("Error"));
+    }
+    
+    @Test
+    @DisplayName("Filters out noisy snippets from supporting facts")
+    void testFiltersNoisySnippetsFromSupportingFacts() {
+        // Given: Mix of good and noisy facts as evidence chunks
+        String query = "Do I have a reimbursement claim?";
+        
+        // Create evidence chunks that match quality and noisy facts
+        EvidenceChunk goodChunk1 = createTestChunk(
+            "I paid $20,000 in post-separation mortgage payments.",
+            1L, 1, "Page 1"
+        );
+        EvidenceChunk noisyChunk1 = createTestChunk("23", 2L, 1, "Page 1");  // Pure number
+        EvidenceChunk noisyChunk2 = createTestChunk("real and personal $", 3L, 1, "Page 1");  // Boilerplate
+        EvidenceChunk goodChunk2 = createTestChunk(
+            "Property was community property during marriage.",
+            4L, 1, "Page 2"
+        );
+        EvidenceChunk noisyChunk3 = createTestChunk("1,500", 5L, 1, "Page 2");  // Pure numeric
+        EvidenceChunk goodChunk3 = createTestChunk(
+            "Payment made from separate property account.",
+            6L, 1, "Page 3"
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement claim", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("I paid $20,000 in post-separation mortgage payments", true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Property was community property during marriage", true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Payment made from separate property account", true, "source", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Reimbursement evaluated under Epstein factors."
+        );
+        
+        // Mix evidence chunks - good and noisy
+        testRetrievalService.setEvidenceChunks(List.of(
+            goodChunk1, noisyChunk1, noisyChunk2, goodChunk2, noisyChunk3, goodChunk3
+        ));
+        testContextBuilder.setContext(context);
+        
+        // When
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then
+        assertEquals(TaskMode.CASE_ANALYSIS, result.getMode());
+        assertTrue(result.isSuccess(), "Result should be successful. Error: " + result.getErrorMessage());
+        
+        String answer = result.getAnswer();
+        assertNotNull(answer);
+        
+        // Verify that quality facts are included
+        assertTrue(answer.contains("I paid $20,000 in post-separation mortgage payments"), 
+            "Quality fact with payment amount should be included");
+        assertTrue(answer.contains("Property was community property during marriage"), 
+            "Quality fact about property should be included");
+        assertTrue(answer.contains("Payment made from separate property account"), 
+            "Quality fact about payment source should be included");
+        
+        // Verify that noisy snippets are filtered out
+        assertFalse(answer.contains("  - 23"), 
+            "Pure numeric snippet should be filtered out");
+        assertFalse(answer.contains("  - real and personal $"), 
+            "Boilerplate form snippet should be filtered out");
+        assertFalse(answer.contains("  - 1,500"), 
+            "Pure numeric snippet should be filtered out");
     }
     
     @Test
