@@ -261,8 +261,8 @@ class PaymentRecordExtractorTest {
     }
     
     /**
-     * Test priority: Anchored labels > Transaction row amount.
-     * (But this test shows both would give same result)
+     * Test TRANSACTION-ROW-FIRST: Transaction row amount takes priority.
+     * Verify that transaction row amount overrides summary field amounts.
      */
     @Test
     void testAmountPriorityFromRegularMonthlyPayment() {
@@ -274,8 +274,8 @@ class PaymentRecordExtractorTest {
         assertEquals(1, records.size());
         PaymentRecord record = records.get(0);
         
-        // Should use first anchored label found (Regular Monthly Payment)
-        assertEquals(5000.0, record.getAmount());
+        // TRANSACTION-ROW-FIRST: Must use transaction row amount (4679.23), not summary (5000.0)
+        assertEquals(4679.23, record.getAmount());
     }
     
     /**
@@ -291,6 +291,130 @@ class PaymentRecordExtractorTest {
         PaymentRecord record = records.get(0);
         
         assertEquals(4679.23, record.getAmount(), 0.01);
+    }
+    
+    /**
+     * Test TRANSACTION-ROW-FIRST: Transaction row date/amount override summary fields.
+     * Verify that Interest Rate Until date is NOT used when transaction row present.
+     */
+    @Test
+    void testTransactionRowDateOverridesSummaryDate() {
+        String text = "Interest Rate Until 01/01/2029\n" +
+                      "Loan Number: 2109013512\n" +
+                      "Regular Monthly Payment $4,679.23\n" +
+                      "01/02/26 PAYMENT $4,679.23";
+        
+        List<PaymentRecord> records = extractor.extract(text);
+        
+        assertEquals(1, records.size());
+        PaymentRecord record = records.get(0);
+        
+        // MUST use transaction row date, NOT Interest Rate Until date
+        assertEquals("01/02/26", record.getPaymentDate(), 
+            "Should use transaction row date, NOT Interest Rate Until (01/01/2029)");
+        assertNotEquals("01/01/2029", record.getPaymentDate());
+    }
+    
+    /**
+     * Test TRANSACTION-ROW-FIRST: Transaction row amount overrides summary amounts.
+     * Verify that summary labels don't override the transaction row amount.
+     */
+    @Test
+    void testTransactionRowAmountOverridesSummaryAmount() {
+        String text = "Principal Payment: $2,345.83\n" +
+                      "Interest Payment: $2,334.40\n" +
+                      "Regular Monthly Payment: $5,000.00\n" +
+                      "01/02/26 PAYMENT ... $4,679.23";
+        
+        List<PaymentRecord> records = extractor.extract(text);
+        
+        assertEquals(1, records.size());
+        PaymentRecord record = records.get(0);
+        
+        // MUST use transaction row amount (4679.23), NOT summary field (5000.00)
+        // NOT principal-only (2345.83) or interest-only (2334.40)
+        assertEquals(4679.23, record.getAmount(), 0.01,
+            "Should use transaction row amount $4,679.23, NOT summary labels or components");
+        assertNotEquals(5000.0, record.getAmount());
+        assertNotEquals(2345.83, record.getAmount());
+    }
+    
+    /**
+     * Test TRANSACTION-ROW-FIRST: Only transaction row is extracted.
+     * Complete validation with all incompatible summary fields present.
+     */
+    @Test
+    void testTransactionRowFirstCompleteExample() {
+        String text = "Interest Rate Until: 01/01/2029\n" +
+                      "Outstanding Principal Balance: $45,832.15\n" +
+                      "Paid Year to Date: $12,000.00\n" +
+                      "Principal: $2,345.83\n" +
+                      "Interest: $2,334.40\n" +
+                      "Property Address: 39586 S DARNER DR NEWARK, CA 94560\n" +
+                      "Loan Number: 2109013512\n" +
+                      "Regular Monthly Payment: $4,679.23\n" +
+                      "01/02/26 PAYMENT ... $4,679.23";
+        
+        List<PaymentRecord> records = extractor.extract(text);
+        
+        assertEquals(1, records.size());
+        PaymentRecord record = records.get(0);
+        
+        // From transaction row (ONLY source for date+amount)
+        assertEquals("01/02/26", record.getPaymentDate());
+        assertEquals(4679.23, record.getAmount(), 0.01);
+        
+        // From anchored fields (always safe)
+        assertEquals("Newark", record.getPropertyName());
+        assertEquals("2109013512", record.getLoanNumber());
+        
+        // MUST NOT use these values:
+        assertNotEquals("01/01/2029", record.getPaymentDate()); // Interest Rate Until
+        assertNotEquals(45832.15, record.getAmount()); // Outstanding Principal Balance
+        assertNotEquals(12000.0, record.getAmount()); // Paid Year to Date
+        assertNotEquals(2345.83, record.getAmount()); // Principal component only
+        assertNotEquals(2334.40, record.getAmount()); // Interest component only
+    }
+    
+    /**
+     * Test fallback to summary fields when NO transaction row exists.
+     */
+    @Test
+    void testFallbackToSummaryFieldsWhenNoTransactionRow() {
+        String text = "Loan Number: ABC123\n" +
+                      "Regular Monthly Payment: $3,500.00\n" +
+                      "Next Payment Due Date: 02/15/26";
+        
+        List<PaymentRecord> records = extractor.extract(text);
+        
+        assertEquals(1, records.size());
+        PaymentRecord record = records.get(0);
+        
+        // Uses summary fields since no transaction row present
+        assertEquals(3500.0, record.getAmount());
+        assertEquals("02/15/26", record.getPaymentDate());
+        assertEquals("ABC123", record.getLoanNumber());
+    }
+    
+    /**
+     * Test rejection of component-only amounts (principal or interest alone).
+     * When transaction row exists with total, component-only values are ignored.
+     */
+    @Test
+    void testRejectComponentOnlyAmountWithTransactionRow() {
+        String text = "Principal: $2,345.83\n" +
+                      "Interest: $2,334.40\n" +
+                      "01/02/26 PAYMENT ... $4,679.23";
+        
+        List<PaymentRecord> records = extractor.extract(text);
+        
+        assertEquals(1, records.size());
+        PaymentRecord record = records.get(0);
+        
+        // MUST use transaction row (4679.23), NOT components
+        assertEquals(4679.23, record.getAmount(), 0.01);
+        assertNotEquals(2345.83, record.getAmount()); // Principal only
+        assertNotEquals(2334.40, record.getAmount()); // Interest only
     }
     
     /**
