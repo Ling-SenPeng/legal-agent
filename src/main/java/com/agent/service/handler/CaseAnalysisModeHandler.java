@@ -859,7 +859,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     }
 
     /**
-     * Append the Relevant Authorities section with top unique authorities (2-3 max).
+     * Append the Relevant Authorities section with top 2 unique authorities.
      * Includes debug logging to track raw, ranked, and rendered authorities.
      * 
      * @param answer StringBuilder to append to
@@ -937,9 +937,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         if (uniqueAuthorities.isEmpty()) {
             answer.append("No authorities retrieved for the identified issues.\n\n");
         } else {
-            // Show top 2-3 authorities
+            // Show top 2 authorities only
             List<LegalAuthority> renderedList = uniqueAuthorities.stream()
-                .limit(3)
+                .limit(2)
                 .peek(auth -> renderedAuthorityIds.add(auth.getAuthorityId()))
                 .toList();
             
@@ -1059,7 +1059,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                         
                         answer.append("Supporting Authorities:\n");
                         List<LegalAuthority> renderedList = rankedAuthorities.stream()
-                            .limit(3)
+                            .limit(2)
                             .peek(auth -> renderedAuthorityIds.add(auth.getAuthorityId()))
                             .toList();
                         

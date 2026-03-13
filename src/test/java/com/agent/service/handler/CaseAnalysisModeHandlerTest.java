@@ -712,6 +712,7 @@ class CaseAnalysisModeHandlerTest {
     void testStatuteRanksAboveGenericCaseForReimbursement() {
         // This test verifies that Cal. Fam. Code § 750 (statute) ranks above
         // generic case law (Moore) that lacks reimbursement keyword matching.
+        // With the 2-authority display limit, only Epstein and § 750 should appear.
         // 
         // For REIMBURSEMENT issues:
         // - Statute gets +0.25 type bonus (vs. +0.10 for case law)
@@ -721,7 +722,7 @@ class CaseAnalysisModeHandlerTest {
         String query = "post separation mortgage reimbursement claim";
         
         // Create test authorities with mixed types
-        // Statute about reimbursement (relevant, should rank first)
+        // Statute about reimbursement (relevant, should rank second in final display)
         LegalAuthority statute750 = new LegalAuthority(
             "statute_fam_750",
             "California Family Code § 750",
@@ -733,7 +734,7 @@ class CaseAnalysisModeHandlerTest {
             0.72  // Base relevance score from search
         );
         
-        // Generic property case without reimbursement keyword (should rank lower)
+        // Generic property case without reimbursement keyword (should NOT appear - ranks 3rd, limit is 2)
         LegalAuthority mooreGeneric = new LegalAuthority(
             "moore_generic",
             "Marriage of Moore",
@@ -744,7 +745,7 @@ class CaseAnalysisModeHandlerTest {
             0.75  // Slightly higher base relevance score
         );
         
-        // Landmark reimbursement case (should rank first overall)
+        // Landmark reimbursement case (should rank first in final display)
         LegalAuthority epstein = new LegalAuthority(
             "epstein_1979",
             "Marriage of Epstein",
@@ -793,19 +794,12 @@ class CaseAnalysisModeHandlerTest {
         // When
         ModeExecutionResult result = handler.execute(query, 5);
         
-        // Then: Verify ranking order
+        // Then: Verify final output shows only top 2 authorities
         assertTrue(result.isSuccess(), "Execution should succeed");
         String answer = result.getAnswer();
         assertNotNull(answer, "Answer should not be null");
         
-        // Verify all authorities appear
-        assertTrue(answer.contains("Epstein"), "Output should contain Epstein");
-        assertTrue(answer.contains("Moore"), "Output should contain Moore");
-        assertTrue(answer.contains("750") || answer.contains("Family Code"), 
-            "Output should contain statute reference (750 or Family Code)");
-        
-        // CRITICAL: Verify ranking order in RELEVANT AUTHORITIES section
-        // Expected order: Epstein (landmark reimbursement) > § 750 (statute) > Moore (generic)
+        // Extract RELEVANT AUTHORITIES section
         int authSectionStart = answer.indexOf("## RELEVANT AUTHORITIES");
         int authSectionEnd = answer.indexOf("## RELEVANT AUTHORITIES & RULE SUMMARY");
         
@@ -814,26 +808,49 @@ class CaseAnalysisModeHandlerTest {
             authSectionEnd = answer.length();
         }
         
+        String authSection = "";
         if (authSectionStart > -1 && authSectionEnd > authSectionStart) {
-            String authSection = answer.substring(authSectionStart, authSectionEnd);
+            authSection = answer.substring(authSectionStart, authSectionEnd);
+        }
+        
+        // CRITICAL TESTS for 2-authority display limit:
+        // 1. Epstein MUST appear (top-ranked authority)
+        assertTrue(authSection.contains("Epstein") || answer.contains("Epstein"),
+            "CRITICAL: Epstein (top-ranked reimbursement case) must appear in final output");
+        
+        // 2. Statute MUST appear (second-ranked authority)
+        assertTrue(authSection.contains("750") || authSection.contains("Family Code") || 
+                   answer.contains("750") || answer.contains("Family Code"),
+            "CRITICAL: Cal. Fam. Code § 750 (second-ranked statute) must appear in final output");
+        
+        // 3. Moore should NOT appear in visible RELEVANT AUTHORITIES section
+        // (it's ranked 3rd, but limit is 2)
+        int epsteinInAuth = authSection.indexOf("Epstein");
+        int statuteInAuth = authSection.indexOf("750");
+        int mooreInAuth = authSection.indexOf("Moore");
+        
+        // Moore should either not appear in the RELEVANT AUTHORITIES section,
+        // or if it still appears in other sections, it should not be in the main authorities list
+        if (epsteinInAuth > -1 && statuteInAuth > -1) {
+            // Extract just the listed authorities line(s) from the section
+            String authLines = authSection.substring(0, 
+                authSection.indexOf("\n\n") > -1 ? authSection.indexOf("\n\n") : authSection.length());
             
-            int epsteinIdx = authSection.indexOf("Epstein");
-            int statuteIdx = authSection.indexOf("750");
-            int mooreIdx = authSection.indexOf("Moore");
+            assertTrue(authLines.contains("Epstein"),
+                "Epstein should be listed in RELEVANT AUTHORITIES section");
+            assertTrue(authLines.contains("750") || authLines.contains("Family Code"),
+                "Statute should be listed in RELEVANT AUTHORITIES section");
             
-            // Verify Epstein appears (landmark case)
-            assertTrue(epsteinIdx >= 0, "Epstein should appear in authorities section");
-            
-            // CRITICAL TEST: Statute (750) should appear before or at same position as Moore
-            // AND Moore should NOT be the first authority if statute is present
-            if (statuteIdx >= 0 && mooreIdx >= 0) {
-                assertTrue(statuteIdx < mooreIdx,
-                    "CRITICAL: Cal. Fam. Code § 750 (statute) should rank above Moore (generic case law) " +
-                    "for REIMBURSEMENT issues. Statute gets +0.25 type bonus, Moore gets -0.4 penalty. " +
-                    "Statute ranking shows improved handling of statutory authority.");
-            } else if (statuteIdx >= 0) {
-                // Statute present, Moore filtered out - that's fine
-                assertTrue(true, "Statute ranked high enough to appear (Moore filtered out)");
+            if (mooreInAuth > -1) {
+                // Moore appears in the section, verify it's only in RULE SUMMARY, not main authorities
+                int mainAuthEnd = authLines.length();
+                assertTrue(mooreInAuth > mainAuthEnd,
+                    "CRITICAL: Moore (ranked 3rd) should NOT appear in main RELEVANT AUTHORITIES list " +
+                    "(display limit is 2). It ranks below Epstein and Family Code § 750.");
+            } else {
+                // Moore correctly omitted from visible output
+                assertTrue(true, 
+                    "CORRECT: Moore excluded from visible output due to 2-authority display limit");
             }
         }
     }
