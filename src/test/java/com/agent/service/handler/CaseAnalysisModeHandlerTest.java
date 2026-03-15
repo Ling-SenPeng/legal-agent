@@ -155,7 +155,7 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("I paid $20,000 in mortgage payments", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("I paid $20,000 in mortgage payments", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -203,8 +203,8 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("I work stable hours", true, "source", LegalIssueType.CUSTODY),
-            new CaseFact("Children ages 7 and 10", true, "source", LegalIssueType.CUSTODY)
+            new CaseFact("I work stable hours", FactPolarity.SUPPORTING, "source", LegalIssueType.CUSTODY),
+            new CaseFact("Children ages 7 and 10", FactPolarity.SUPPORTING, "source", LegalIssueType.CUSTODY)
         );
         
         List<MissingFact> missingFacts = List.of(
@@ -290,9 +290,9 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("I paid $20,000 in post-separation mortgage payments", true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact("The property was financed with a long-term mortgage during marriage", true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact("Payment was made from my separate property account after separation", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("I paid $20,000 in post-separation mortgage payments", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("The property was financed with a long-term mortgage during marriage", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Payment was made from my separate property account after separation", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -363,11 +363,11 @@ class CaseAnalysisModeHandlerTest {
         
         List<CaseFact> facts = List.of(
             new CaseFact("I paid $20,000 in post-separation mortgage payments on community property", 
-                true, "source", LegalIssueType.REIMBURSEMENT),
+                FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
             new CaseFact("The payment was made in 2023 from my separate property account", 
-                true, "source", LegalIssueType.REIMBURSEMENT),
+                FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
             new CaseFact("Community property mortgaged during marriage for home purchase", 
-                true, "source", LegalIssueType.REIMBURSEMENT)
+                FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -431,8 +431,8 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("Paid $40,000 post-separation", true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact("Property was community property", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("Paid $40,000 post-separation", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Property was community property", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(query, issues, facts,
@@ -462,7 +462,7 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("Purchased for $500k", true, "source", LegalIssueType.PROPERTY_CHARACTERIZATION)
+            new CaseFact("Purchased for $500k", FactPolarity.SUPPORTING, "source", LegalIssueType.PROPERTY_CHARACTERIZATION)
         );
         
         List<MissingFact> missingFacts = List.of(
@@ -504,8 +504,8 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("Paid $20,000 in post-separation mortgage payments", true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact("Property was marital/community property", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("Paid $20,000 in post-separation mortgage payments", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Property was marital/community property", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         // Create authorities to be included in the analysis
@@ -596,7 +596,7 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("Paid $25,000 in post-separation mortgage", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("Paid $25,000 in post-separation mortgage", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         // Create shared authorities that appear in multiple summaries
@@ -720,7 +720,7 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("Paid $30,000 post-separation mortgage", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("Paid $30,000 post-separation mortgage", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         // Create "strong match" authority - Epstein (reimbursement-specific)
@@ -865,7 +865,7 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("Paid $20,000 in post-separation mortgage payments", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("Paid $20,000 in post-separation mortgage payments", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         // Create authority summary with authorities in BAD order (Moore first, Epstein second)
@@ -995,7 +995,7 @@ class CaseAnalysisModeHandlerTest {
         
         List<CaseFact> facts = List.of(
             new CaseFact("Paid $20,000 in post-separation mortgage payments on community property", 
-                        true, "source", LegalIssueType.REIMBURSEMENT)
+                        FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         // Create authority summary with authorities in raw order:
@@ -1114,7 +1114,7 @@ class CaseAnalysisModeHandlerTest {
         
         List<CaseFact> facts = List.of(
             new CaseFact("Paid $20,000 in post-separation mortgage payments", 
-                        true, "source", LegalIssueType.REIMBURSEMENT)
+                        FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         // Create authority summary with clear rule text
@@ -1192,7 +1192,7 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("Paid $25,000 in post-separation mortgage", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("Paid $25,000 in post-separation mortgage", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         // Create three authorities: Epstein (statute), Moore (case law), and Huskey (case law)
@@ -1307,7 +1307,7 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("Paid $25,000 in post-separation mortgage", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("Paid $25,000 in post-separation mortgage", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         // Authority 1: Epstein (42 Cal.3d 120) - highest ranked
@@ -1443,7 +1443,7 @@ class CaseAnalysisModeHandlerTest {
         CaseAnalysisContext context = new CaseAnalysisContext(
             query,
             List.of(new CaseIssue(LegalIssueType.REIMBURSEMENT, "Test", 0.9, "test")),
-            List.of(new CaseFact("Test fact", true, "source", LegalIssueType.REIMBURSEMENT)),
+            List.of(new CaseFact("Test fact", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)),
             List.of(),
             "Test analysis",
             List.of(summary)
@@ -1489,7 +1489,7 @@ class CaseAnalysisModeHandlerTest {
         CaseAnalysisContext context = new CaseAnalysisContext(
             query,
             List.of(new CaseIssue(LegalIssueType.REIMBURSEMENT, "Test", 0.9, "test")),
-            List.of(new CaseFact("Test fact", true, "source", LegalIssueType.REIMBURSEMENT)),
+            List.of(new CaseFact("Test fact", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)),
             List.of(),
             "Test analysis",
             List.of(summary)
@@ -1537,7 +1537,7 @@ class CaseAnalysisModeHandlerTest {
         CaseAnalysisContext context = new CaseAnalysisContext(
             query,
             List.of(new CaseIssue(LegalIssueType.REIMBURSEMENT, "Test", 0.9, "test")),
-            List.of(new CaseFact("Test fact", true, "source", LegalIssueType.REIMBURSEMENT)),
+            List.of(new CaseFact("Test fact", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)),
             List.of(),
             "Test analysis",
             List.of(summary)
@@ -1587,7 +1587,7 @@ class CaseAnalysisModeHandlerTest {
         CaseAnalysisContext context = new CaseAnalysisContext(
             query,
             List.of(new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.9, "reimbursement")),
-            List.of(new CaseFact("Paid community obligation with separate funds", true, "source", LegalIssueType.REIMBURSEMENT)),
+            List.of(new CaseFact("Paid community obligation with separate funds", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)),
             List.of(),
             "Reimbursement analysis",
             List.of(summary)
@@ -1655,7 +1655,7 @@ class CaseAnalysisModeHandlerTest {
         CaseAnalysisContext context = new CaseAnalysisContext(
             query,
             List.of(new CaseIssue(LegalIssueType.PROPERTY_CHARACTERIZATION, "Property", 0.9, "property")),
-            List.of(new CaseFact("Property purchased during marriage", true, "source", LegalIssueType.PROPERTY_CHARACTERIZATION)),
+            List.of(new CaseFact("Property purchased during marriage", FactPolarity.SUPPORTING, "source", LegalIssueType.PROPERTY_CHARACTERIZATION)),
             List.of(),
             "Property analysis",
             List.of(summary)
@@ -1718,9 +1718,9 @@ class CaseAnalysisModeHandlerTest {
         
         List<CaseFact> facts = List.of(
             // Down payment fact - should be rejected
-            new CaseFact("We contributed $50,000 as down payment when we purchased the home", true, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("We contributed $50,000 as down payment when we purchased the home", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
             // Valid post-separation payment fact
-            new CaseFact("I paid $20,000 in post-separation mortgage payments after we separated", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("I paid $20,000 in post-separation mortgage payments after we separated", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -1780,9 +1780,9 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("23 If payment is received after 10/16/2025, a late fee will be assessed", true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact("Payment received after 11/01/2025: 5% penalty applies", true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact("I paid $15,000 in post-separation mortgage principal and interest payments", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("23 If payment is received after 10/16/2025, a late fee will be assessed", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Payment received after 11/01/2025: 5% penalty applies", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("I paid $15,000 in post-separation mortgage principal and interest payments", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -1840,9 +1840,9 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("We purchased a house during marriage for $400,000", true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact("Initial contribution made at closing", true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact("1500", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("We purchased a house during marriage for $400,000", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Initial contribution made at closing", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("1500", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -1902,8 +1902,8 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact("Post-separation, I paid $25,000 in monthly mortgage payments on the marital residence", true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact("Each payment was $1,200 principal and $800 interest per month for 20 months", true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact("Post-separation, I paid $25,000 in monthly mortgage payments on the marital residence", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Each payment was $1,200 principal and $800 interest per month for 20 months", FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -2146,7 +2146,7 @@ class CaseAnalysisModeHandlerTest {
         
         List<CaseFact> facts = List.of(
             new CaseFact("I paid $20,000 in separate property funds to mortgage",
-                true, "source", LegalIssueType.REIMBURSEMENT)
+                FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -2193,8 +2193,8 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact(goodPaymentFact, true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact(badTableFragment, true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact(goodPaymentFact, FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact(badTableFragment, FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -2252,9 +2252,9 @@ class CaseAnalysisModeHandlerTest {
         );
         
         List<CaseFact> facts = List.of(
-            new CaseFact(genericFact, true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact(specificFact, true, "source", LegalIssueType.REIMBURSEMENT),
-            new CaseFact(benefitFact, true, "source", LegalIssueType.REIMBURSEMENT)
+            new CaseFact(genericFact, FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact(specificFact, FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
+            new CaseFact(benefitFact, FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -2327,9 +2327,9 @@ class CaseAnalysisModeHandlerTest {
         
         List<CaseFact> facts = List.of(
             new CaseFact("I contributed $50,000 down payment toward the purchase of the family home during marriage", 
-                true, "source", LegalIssueType.REIMBURSEMENT),
+                FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
             new CaseFact("I paid $3,000 in monthly mortgage payments after separation in 2023",
-                true, "source", LegalIssueType.REIMBURSEMENT)
+                FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -2392,11 +2392,11 @@ class CaseAnalysisModeHandlerTest {
         
         List<CaseFact> facts = List.of(
             new CaseFact("23 If payment is received after 10/16/2025, it will be a late payment",
-                true, "source", LegalIssueType.REIMBURSEMENT),
+                FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
             new CaseFact("Payment received - late fees may apply if not before the due date",
-                true, "source", LegalIssueType.REIMBURSEMENT),
+                FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
             new CaseFact("Monthly mortgage payment of $2,400 was paid from my separate account after separation",
-                true, "source", LegalIssueType.REIMBURSEMENT)
+                FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(
@@ -2460,11 +2460,11 @@ class CaseAnalysisModeHandlerTest {
         
         List<CaseFact> facts = List.of(
             new CaseFact("We had property together",
-                true, "source", LegalIssueType.REIMBURSEMENT),
+                FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
             new CaseFact("Payment of some kind was made",
-                true, "source", LegalIssueType.REIMBURSEMENT),
+                FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT),
             new CaseFact("I paid $10,000 in post-separation mortgage payments from my separate property account",
-                true, "source", LegalIssueType.REIMBURSEMENT)
+                FactPolarity.SUPPORTING, "source", LegalIssueType.REIMBURSEMENT)
         );
         
         CaseAnalysisContext context = new CaseAnalysisContext(

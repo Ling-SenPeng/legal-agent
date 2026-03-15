@@ -18,19 +18,6 @@ public class CaseFact {
         this.sourceReference = sourceReference;
         this.relevantIssue = relevantIssue;
     }
-    
-    /**
-     * Convenience constructor for backwards compatibility.
-     * Converts boolean favorable to FactPolarity.
-     */
-    @Deprecated
-    public CaseFact(String description, boolean favorable, String sourceReference, LegalIssueType relevantIssue) {
-        this(description, 
-            favorable ? FactPolarity.SUPPORTING : FactPolarity.ADVERSE,
-            sourceReference, 
-            relevantIssue
-        );
-    }
 
     public String getDescription() {
         return description;
