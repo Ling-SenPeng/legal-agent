@@ -16,6 +16,23 @@ import java.util.stream.Collectors;
  * Supports both vector-only and hybrid (vector + keyword) search modes.
  * Uses RetrievalPlanner to optimize queries before searching.
  * 
+ * PAYMENT EVIDENCE ARCHITECTURE NOTE:
+ * ==================================
+ * This service is PDF-CHUNK CENTRIC. For payment-related queries, evidence
+ * now flows through PaymentEvidenceService (payment_records table) instead.
+ * 
+ * Current flow (Phase 1):
+ * 1. CaseAnalysisModeHandler detects payment query via PaymentEvidenceRoute
+ * 2. Attempts PaymentEvidenceService.getPaymentsByProperty() [TODO: not yet DB-connected]
+ * 3. Falls back to RetrievalService.retrieveEvidence() for chunks
+ * 
+ * TODO: FUTURE - RetrievalService alignment with payment flows
+ * - [ ] Consider RetrievalService refactor to be payment-aware
+ * - [ ] OR create separate PaymentAwareRetrievalService for payment questions
+ * - [ ] Ensure chunk retrieval remains accurate fallback for payment evidence
+ * - [ ] Document when chunks vs. payment_records should be primary
+ * - [ ] Consider a unified EvidenceService that merges both sources
+ * 
  * DESIGN NOTES:
  * - Keyword search is heavily trusted for legal document retrieval (literal matching)
  * - Vector search provides semantic coverage and catches paraphrasing

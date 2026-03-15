@@ -106,6 +106,9 @@ class CaseAnalysisModeHandlerTest {
         var realCounterArgumentFilter = new CounterArgumentFilter();
         var realMortgageStatementParser = new MortgageStatementParser();
         
+        // Create PaymentEvidenceRoute for payment detection
+        var paymentEvidenceRoute = new com.agent.service.PaymentEvidenceRoute();
+        
         // Create mock property-aware analysis services
         var propertyExtractionService = new com.agent.service.analysis.PropertyExtractionService();
         var propertyScopeDetector = new com.agent.service.analysis.PropertyScopeDetector();
@@ -116,6 +119,7 @@ class CaseAnalysisModeHandlerTest {
         
         handler = new CaseAnalysisModeHandler(
             testPaymentEvidenceService,
+            paymentEvidenceRoute,
             testRetrievalService, 
             testContextBuilder,
             testQueryCleaner,

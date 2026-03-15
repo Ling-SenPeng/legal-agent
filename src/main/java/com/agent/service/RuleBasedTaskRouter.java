@@ -63,6 +63,12 @@ public class RuleBasedTaskRouter implements TaskRouter {
     /**
      * Route query to appropriate task mode using heuristic keyword matching.
      * 
+     * NOTE: PAYMENT ROUTING ENHANCEMENT (Future)
+     * When PaymentEvidenceService integration is complete, payment-related queries
+     * should be pre-routed to leverage payment_records table instead of chunk retrieval.
+     * Current routing still directs them to CASE_ANALYSIS, which will later delegate
+     * to PaymentEvidenceService. See: RuleBasedPaymentEvidenceService.java
+     * 
      * @param query The user's query
      * @return TaskRoutingResult with detected mode and confidence
      */

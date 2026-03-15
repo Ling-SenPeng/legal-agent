@@ -17,7 +17,24 @@ import java.util.regex.Pattern;
 /**
  * Service for parsing structured mortgage statements.
  * 
- * Extracts payment records from mortgage statements, ensuring fields
+ * DEPRECATION NOTICE (Phase 2+):
+ * =============================
+ * This class performs TEXT-BASED parsing of mortgage statements. When the payment_records
+ * table is reliably populated from structured data sources, this parser becomes
+ * a fallback-only utility.
+ * 
+ * CLEANUP PLAN:
+ * - [ ] Once payment_records table eliminates OCR dependency, mark @Deprecated
+ * - [ ] Reduce usage to fallback scenarios only
+ * - [ ] Document conditions requiring statement parsing vs. structured records
+ * - [ ] Consider retiring if structured sources are reliable
+ * 
+ * NOTE: DO NOT DELETE YET - Still needed for:
+ * - Documents with OCR artifacts
+ * - Historical statements not yet ingested to payment_records
+ * - Testing statement parsing accuracy
+ * 
+ * Current use: Extractcts payment records from mortgage statements, ensuring fields
  * are only bound when they occur within the same payment block.
  * 
  * Detects blocks like:

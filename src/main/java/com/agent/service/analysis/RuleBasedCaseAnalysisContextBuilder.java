@@ -15,6 +15,31 @@ import java.util.stream.Collectors;
  * 
  * Orchestrates issue extraction, fact extraction, and missing fact identification
  * to build a complete analysis context.
+ * 
+ * PAYMENT EVIDENCE INTEGRATION NOTES:
+ * ===================================
+ * This component is designed to be payment-aware in future phases. Currently:
+ * 
+ * CURRENT (Phase 1): Facts are extracted only from EvidenceChunk (PDF chunks)
+ * via CaseFactExtractor.extractFacts(). This is applicable for both payment
+ * and non-payment queries.
+ * 
+ * TODO: FUTURE PHASES
+ * - [ ] Extract facts from PaymentRecord objects when available
+ * - [ ] Blend facts from both chunks and payment records
+ * - [ ] Prioritize payment_records facts for payment questions (handled by CaseAnalysisModeHandler)
+ * - [ ] Ensure fact deduplication when same fact appears in both sources
+ * - [ ] Add payment-specific fact filtering (e.g., post-separation filter)
+ * 
+ * INTEGRATION POINTS:
+ * 1. CaseAnalysisModeHandler.retrieveAndMergeEvidence() - Converts PaymentRecords to chunks
+ * 2. CaseFactExtractor.extractFacts() - Could be extended to handle PaymentRecord inputs
+ * 3. Future: New method buildContextWithPaymentEvidence() for payment-optimized flow
+ * 
+ * DESIGN PRINCIPLE:
+ * The builder should remain agnostic to evidence source (chunks, payment records, etc.).
+ * It focuses on converting evidence to facts and missing facts. Source selection
+ * happens upstream in CaseAnalysisModeHandler.
  */
 @Service
 public class RuleBasedCaseAnalysisContextBuilder implements CaseAnalysisContextBuilder {

@@ -10,6 +10,8 @@ import com.agent.model.analysis.authority.AuthoritySummary;
 import com.agent.model.analysis.authority.LegalAuthority;
 import com.agent.model.analysis.authority.AuthorityType;
 import com.agent.service.TaskModeHandler;
+import com.agent.service.PaymentEvidenceService;
+import com.agent.service.PaymentEvidenceRoute;
 import com.agent.service.RetrievalService;
 import com.agent.service.analysis.CaseAnalysisContextBuilder;
 import com.agent.service.analysis.CaseAnalysisQueryCleaner;
@@ -60,6 +62,8 @@ import java.util.ArrayList;
 public class CaseAnalysisModeHandler implements TaskModeHandler {
     private static final Logger logger = LoggerFactory.getLogger(CaseAnalysisModeHandler.class);
     
+    private final PaymentEvidenceService paymentEvidenceService;
+    private final PaymentEvidenceRoute paymentEvidenceRoute;
     private final RetrievalService retrievalService;
     private final CaseAnalysisContextBuilder contextBuilder;
     private final CaseAnalysisQueryCleaner queryCleaner;
@@ -86,6 +90,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private final ThreadLocal<PropertyScopeDetector.PropertyScopeResult> currentPropertyScope = new ThreadLocal<>();
 
     public CaseAnalysisModeHandler(
+        PaymentEvidenceService paymentEvidenceService,
+        PaymentEvidenceRoute paymentEvidenceRoute,
         RetrievalService retrievalService,
         CaseAnalysisContextBuilder contextBuilder,
         CaseAnalysisQueryCleaner queryCleaner,
@@ -102,6 +108,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         PropertyAwareCaseAnalysis propertyAwareCaseAnalysis,
         PropertyScopeDetector propertyScopeDetector
     ) {
+        this.paymentEvidenceService = paymentEvidenceService;
+        this.paymentEvidenceRoute = paymentEvidenceRoute;
         this.retrievalService = retrievalService;
         this.contextBuilder = contextBuilder;
         this.queryCleaner = queryCleaner;
@@ -643,7 +651,72 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * @param topK Number of results per query
      * @return Merged list of unique evidence chunks
      */
+    /**
+     * Retrieve evidence for legal analysis.
+     * 
+     * REFACTORED FOR PAYMENT INTEGRATION (Phase 1):
+     * - Detects payment-related queries using PaymentEvidenceRoute
+     * - Attempts PaymentEvidenceService first for payment questions
+     * - Falls back to chunk-based retrieval (pdf_chunks) for:
+     *   - Non-payment questions
+     *   - Payment questions with insufficient payment_records
+     *   - Fallback evidence for context enrichment
+     * 
+     * DESIGN INTENT:
+     * This enables gradual migration from chunk-based to payment_records-based
+     * evidence without breaking existing CASE_ANALYSIS workflow.
+     * 
+     * TODO: Future phases:
+     * - [ ] Integrate actual PaymentRecordRepository queries when DB is available
+     * - [ ] Handle property-resolved payment table lookups
+     * - [ ] Implement smart fallback logic based on evidence quality
+     * - [ ] Add payment evidence formatting to match chunk interface
+     * 
+     * @param retrievalQueries List of retrieval queries for chunk search
+     * @param topK Number of evidence chunks to retrieve
+     * @return Merged evidence chunks, prioritizing payment_records when available
+     */
     private List<EvidenceChunk> retrieveAndMergeEvidence(List<String> retrievalQueries, int topK) {
+        logger.debug("[CASE_ANALYSIS] retrieveAndMergeEvidence: initial queries={}", retrievalQueries.size());
+        
+        // ===== PAYMENT EVIDENCE PRE-FLIGHT (Phase 1) =====
+        
+        // Step 1: Detect if this is a payment-related query
+        String originalQuery = retrievalQueries.isEmpty() ? "" : retrievalQueries.get(0);
+        boolean isPaymentQuery = paymentEvidenceRoute.isPaymentRelatedQuery(originalQuery);
+        
+        if (isPaymentQuery) {
+            logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] Detected payment-related query");
+            logger.debug("  Query: '{}'", originalQuery);
+            
+            List<String> propertyRefs = paymentEvidenceRoute.extractPropertyReferences(originalQuery);
+            boolean hasDateFilter = paymentEvidenceRoute.requiresDateFiltering(originalQuery);
+            
+            logger.debug(paymentEvidenceRoute.generateRoutingLog(originalQuery, true, propertyRefs, hasDateFilter));
+            
+            // TODO: PAYMENT RECORDS INTEGRATION (Phase 2)
+            // When PaymentRecordRepository is integrated with database:
+            //
+            // try {
+            //     List<PaymentRecord> paymentRecords = paymentEvidenceService.getPaymentsByProperty(
+            //         propertyAddress, propertyCity);
+            //     
+            //     if (!paymentRecords.isEmpty()) {
+            //         logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] Found {} payment records", paymentRecords.size());
+            //         return convertPaymentRecordsToChunks(paymentRecords);
+            //     } else {
+            //         logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] No payment records found - falling back to chunks");
+            //     }
+            // } catch (Exception e) {
+            //     logger.warn("[CASE_ANALYSIS_PAYMENT_ROUTING] PaymentEvidenceService error - fallback to chunks", e);
+            // }
+            //
+            // CURRENT (Phase 1): Payment detection is in place, but actual payment_records
+            // lookup is not yet implemented. This serves as integration point for future phases.
+        }
+        
+        // ===== CHUNK-BASED RETRIEVAL (Current implementation) =====
+        
         // Use map to deduplicate chunks by ID, keeping the highest similarity score
         Map<Long, EvidenceChunk> chunkMap = new HashMap<>();
         
@@ -689,6 +762,11 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         logger.debug("[CASE_ANALYSIS] Total unique chunks after merging: {} (sorted by similarity)",
             mergedChunks.size());
+        
+        if (isPaymentQuery) {
+            logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] Using {} chunks as evidence (payment_records integration pending)",
+                mergedChunks.size());
+        }
         
         return mergedChunks;
     }
@@ -2130,9 +2208,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                     
                     // Log extracted record details
                     String recordLog = String.format("property:%s, date:%s, amount:%.2f, loan:%s",
-                        record.getPropertyName() != null ? record.getPropertyName() : "unknown",
+                        record.getPropertyAddress() != null ? record.getPropertyAddress() : "unknown",
                         record.getPaymentDate() != null ? record.getPaymentDate() : "unknown",
-                        record.getAmount() != null ? record.getAmount() : 0.0,
+                        record.getTotalAmount() != null ? record.getTotalAmount().doubleValue() : 0.0,
                         record.getLoanNumber() != null ? record.getLoanNumber() : "unknown");
                     extractedRecordLogs.add(recordLog);
                     
@@ -2188,16 +2266,18 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * @return FilterResult with inclusion decision and reason
      */
     private PaymentDateFilterResult filterPaymentByDOS(PaymentRecord record, String dos) {
-        String paymentDate = record.getPaymentDate();
+        java.time.LocalDate paymentDate = record.getPaymentDate();
         
-        if (paymentDate == null || paymentDate.isBlank()) {
+        if (paymentDate == null) {
             // No date to compare - cannot filter by DOS
             return new PaymentDateFilterResult(true, "no_payment_date");
         }
         
+        String paymentDateStr = paymentDate.format(java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy"));
+        
         try {
             // Normalize dates for comparison
-            String normalizedPaymentDate = normalizeDateForComparison(paymentDate);
+            String normalizedPaymentDate = normalizeDateForComparison(paymentDateStr);
             String normalizedDOS = normalizeDateForComparison(dos);
             
             if (normalizedPaymentDate == null || normalizedDOS == null) {
@@ -2273,21 +2353,21 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * Example: "Mortgage payment of $4,679.23 on 01/02/26 for Newark property (Loan #2109013512)"
      */
     private String formatPaymentRecordAsFactDescription(PaymentRecord record) {
-        if (record.getAmount() == null) {
+        if (record.getTotalAmount() == null) {
             return null;
         }
         
         StringBuilder fact = new StringBuilder("Mortgage payment of $");
-        fact.append(String.format("%.2f", record.getAmount()));
+        fact.append(String.format("%.2f", record.getTotalAmount().doubleValue()));
         
         // Add date if available
-        if (record.getPaymentDate() != null && !record.getPaymentDate().isEmpty()) {
-            fact.append(" on ").append(record.getPaymentDate());
+        if (record.getPaymentDate() != null) {
+            fact.append(" on ").append(record.getPaymentDate().format(java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy")));
         }
         
         // Add property if available
-        if (record.getPropertyName() != null && !record.getPropertyName().isEmpty()) {
-            fact.append(" for ").append(record.getPropertyName()).append(" property");
+        if (record.getPropertyAddress() != null && !record.getPropertyAddress().isEmpty()) {
+            fact.append(" for ").append(record.getPropertyAddress()).append(" property");
         }
         
         // Add loan number if available

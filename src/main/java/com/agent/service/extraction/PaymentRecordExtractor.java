@@ -13,6 +13,23 @@ import java.util.regex.Pattern;
 /**
  * Extracts structured payment records from text snippets using TRANSACTION-ROW-FIRST EXTRACTION.
  * 
+ * DEPRECATION NOTICE (Phase 2+):
+ * =============================
+ * This class performs TEXT-BASED extraction from PDF chunks. When PaymentEvidenceService
+ * integration is complete (payment_records table queryable), this extraction logic
+ * should be DEPRECATED in favor of direct database queries.
+ * 
+ * CLEANUP PLAN:
+ * - [ ] Once payment_records table is reliably populated, make this class @Deprecated
+ * - [ ] Remove PaymentRecordExtractor usage from CaseAnalysisModeHandler
+ * - [ ] Keep as fallback for edge cases only (non-structured documents)
+ * - [ ] Document fallback conditions in PaymentEvidenceRoute
+ * 
+ * NOTE: DO NOT DELETE YET - May be needed for:
+ * - Backward compatibility during migration
+ * - Fallback extraction when structured records missing
+ * - Testing and validation of OCR accuracy
+ * 
  * Priority: If a transaction row with PAYMENT exists, extract ONLY from that row.
  * Do not allow summary fields to override transaction row data.
  * 
