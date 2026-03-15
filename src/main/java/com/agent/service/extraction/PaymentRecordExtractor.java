@@ -11,43 +11,31 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Extracts structured payment records from text snippets using TRANSACTION-ROW-FIRST EXTRACTION.
+ * DEPRECATED: Text-based payment record extraction from PDF chunks.
  * 
- * DEPRECATION NOTICE (Phase 2+):
- * =============================
- * This class performs TEXT-BASED extraction from PDF chunks. When PaymentEvidenceService
- * integration is complete (payment_records table queryable), this extraction logic
- * should be DEPRECATED in favor of direct database queries.
+ * This class is now deprecated in favor of structured PaymentRecord queries from the payment_records table.
+ * As of Phase 3, CaseAnalysisModeHandler uses DB-backed PaymentRecord data exclusively.
  * 
- * CLEANUP PLAN:
- * - [ ] Once payment_records table is reliably populated, make this class @Deprecated
- * - [ ] Remove PaymentRecordExtractor usage from CaseAnalysisModeHandler
- * - [ ] Keep as fallback for edge cases only (non-structured documents)
- * - [ ] Document fallback conditions in PaymentEvidenceRoute
+ * Deprecation Status (Phase 3):
+ * ✅ COMPLETED - PaymentRecordExtractor usage removed from CaseAnalysisModeHandler
+ * ✅ COMPLETED - Structured PaymentRecord DB data is now canonical source
  * 
- * NOTE: DO NOT DELETE YET - May be needed for:
- * - Backward compatibility during migration
- * - Fallback extraction when structured records missing
+ * Keep this class for:
+ * - Legacy edge cases or fallback extraction if needed in future
  * - Testing and validation of OCR accuracy
+ * - Backward compatibility reference
  * 
- * Priority: If a transaction row with PAYMENT exists, extract ONLY from that row.
- * Do not allow summary fields to override transaction row data.
+ * Do NOT use this class in new code. Always use PaymentEvidenceService.getPaymentsByProperty() 
+ * or other DB-backed query methods instead.
  * 
- * Valid extraction sources:
- * - Transaction row (HIGHEST PRIORITY): Date + Amount from "DD/MM/YY PAYMENT ... $X" row
- * - Fallback (only if no transaction row): Summary labels
- *   - Amount: "Regular Monthly Payment", "Total Payment Amount", "Amount Due"
- *   - Date: "Next Payment Due Date", "Date Paid"
- * - Always anchored:
- *   - Property: "Property Address:" line
- *   - Loan: "Loan Number:" line
- * 
- * Does NOT extract from (even if present):
- * - Outstanding Principal Balance
- * - Interest Rate Until / Maturity Date (summary dates)
- * - Paid Year to Date
- * - Principal/Interest component only (without total)
+ * Details on text extraction logic (for reference):
+ * - Priority: If a transaction row with PAYMENT exists, extract ONLY from that row
+ * - Do not allow summary fields to override transaction row data
+ * - Valid extraction sources:
+ *   - Transaction row (HIGHEST PRIORITY): Date + Amount from "DD/MM/YY PAYMENT ... $X" row
+ *   - Fallback (only if no transaction row): Summary labels
  */
+@Deprecated(since = "Phase 3", forRemoval = false)
 @Component
 public class PaymentRecordExtractor {
     private static final Logger logger = LoggerFactory.getLogger(PaymentRecordExtractor.class);
