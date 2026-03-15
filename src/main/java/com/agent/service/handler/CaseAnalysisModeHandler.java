@@ -3551,28 +3551,39 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             return facts;
         }
         
+        logger.info("[RENDERING_FILTER_START] Processing {} facts for quality filtering", facts.size());
+        
         List<CaseFact> result = new ArrayList<>();
         List<String> rejectedFacts = new ArrayList<>();
         
         for (CaseFact fact : facts) {
             String desc = fact.getDescription();
             if (desc == null || desc.isEmpty()) {
+                logger.info("[RENDERING_FILTER_REJECT] null/empty description");
                 if (logger.isDebugEnabled()) {
                     rejectedFacts.add("(null/empty) | reason=null_or_empty");
                 }
                 continue;
             }
             
+            // ✅ CRITICAL: Log source to identify PaymentRecord facts
+            String source = fact.getSourceReference() != null ? fact.getSourceReference() : "UNKNOWN";
+            boolean isPaymentRecord = source.contains("PaymentRecord") || source.contains("PAYMENT");
+            
             // Filter 1: Length check - too short is likely noise
             if (desc.length() < 15) {
                 if (desc.contains("$") || desc.toLowerCase().contains("paid") || 
                     desc.toLowerCase().contains("property")) {
                     result.add(fact);
+                    logger.info("[RENDERING_FILTER_ACCEPT] short_with_keywords source={} desc={}",
+                        source, truncateForLogging(desc));
                     if (logger.isDebugEnabled()) {
                         logger.debug("[RENDERING_FILTER] ACCEPTED | {} | reason=short_with_keywords",
                             truncateForLogging(desc));
                     }
                 } else {
+                    logger.info("[RENDERING_FILTER_REJECT] too_short ({} chars) source={} desc={}",
+                        desc.length(), source, truncateForLogging(desc));
                     if (logger.isDebugEnabled()) {
                         rejectedFacts.add(truncateForLogging(desc) + " | reason=too_short");
                     }
@@ -3583,6 +3594,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             // Filter 2: Numeric-only or near-numeric fragments
             String descNoWhitespace = desc.replaceAll("\\s+", "");
             if (descNoWhitespace.matches("^[0-9,.$]+$")) {
+                logger.info("[RENDERING_FILTER_REJECT] numeric_only source={} desc={}",
+                    source, truncateForLogging(desc));
                 if (logger.isDebugEnabled()) {
                     rejectedFacts.add(truncateForLogging(desc) + " | reason=numeric_only");
                 }
@@ -3592,6 +3605,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             // Filter 2.5: Multi-line numeric/table fragments
             // Reject: numeric-only or short numeric first line + table headers in later lines
             if (isNumericTableFragment(desc)) {
+                logger.info("[RENDERING_FILTER_REJECT] numeric_table_fragment source={} desc={}",
+                    source, truncateForLogging(desc));
                 if (logger.isDebugEnabled()) {
                     rejectedFacts.add(truncateForLogging(desc) + " | reason=numeric_table_fragment");
                 }
@@ -3633,11 +3648,17 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             
             // Passes all filters - high quality
             result.add(fact);
+            logger.info("[RENDERING_FILTER_ACCEPT] passes_all_filters source={} desc={}",
+                source, truncateForLogging(desc));
             if (logger.isDebugEnabled()) {
                 logger.debug("[RENDERING_FILTER] ACCEPTED | {} | reason=passes_all_filters",
                     truncateForLogging(desc));
             }
         }
+        
+        // ✅ CRITICAL: Log summary of quality filtering
+        logger.info("[RENDERING_FILTER_END] Result: {} of {} facts passed quality filter",
+            result.size(), facts.size());
         
         // Log rejected facts as a group
         if (logger.isDebugEnabled() && !rejectedFacts.isEmpty()) {
