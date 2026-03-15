@@ -36,38 +36,22 @@ public class PaymentEvidenceRoute {
     // Payment-specific keywords that indicate queries should use PaymentEvidenceService
     private static final Set<String> PAYMENT_INTENT_KEYWORDS = new HashSet<>();
     static {
-        // Post-separation mortgage/loan payments
-        PAYMENT_INTENT_KEYWORDS.add("post.separation");
-        PAYMENT_INTENT_KEYWORDS.add("post-separation");
-        PAYMENT_INTENT_KEYWORDS.add("after.separation");
-        PAYMENT_INTENT_KEYWORDS.add("after.divorce");
-        PAYMENT_INTENT_KEYWORDS.add("mortgage.payment");
-        PAYMENT_INTENT_KEYWORDS.add("mortgage.reimbursement");
-        PAYMENT_INTENT_KEYWORDS.add("mortgage reimbursement");
-        
-        // Loan/payment types
-        PAYMENT_INTENT_KEYWORDS.add("loan.payment");
-        PAYMENT_INTENT_KEYWORDS.add("loan.reimbursement");
-        PAYMENT_INTENT_KEYWORDS.add("monthly.payment");
-        PAYMENT_INTENT_KEYWORDS.add("principal.interest");
+        // Core payment keywords
+        PAYMENT_INTENT_KEYWORDS.add("payment");
+        PAYMENT_INTENT_KEYWORDS.add("mortgage");
+        PAYMENT_INTENT_KEYWORDS.add("principal");
+        PAYMENT_INTENT_KEYWORDS.add("interest");
         PAYMENT_INTENT_KEYWORDS.add("escrow");
-        
-        // Financial obligation analysis
-        PAYMENT_INTENT_KEYWORDS.add("obligation");
-        PAYMENT_INTENT_KEYWORDS.add("paid for");
-        PAYMENT_INTENT_KEYWORDS.add("payment.");
-        PAYMENT_INTENT_KEYWORDS.add("payment ");
-        
-        // Property-based financial analysis
-        PAYMENT_INTENT_KEYWORDS.add("property.payment");
-        PAYMENT_INTENT_KEYWORDS.add("property payment");
-        PAYMENT_INTENT_KEYWORDS.add("house.payment");
-        PAYMENT_INTENT_KEYWORDS.add("home.payment");
-        
-        // Community property and reimbursement
-        PAYMENT_INTENT_KEYWORDS.add("community.property.payment");
-        PAYMENT_INTENT_KEYWORDS.add("separate.property.payment");
+        PAYMENT_INTENT_KEYWORDS.add("property tax");
+        PAYMENT_INTENT_KEYWORDS.add("insurance");
+        PAYMENT_INTENT_KEYWORDS.add("loan");
         PAYMENT_INTENT_KEYWORDS.add("reimbursement");
+        
+        // Post-separation specific
+        PAYMENT_INTENT_KEYWORDS.add("post-separation");
+        PAYMENT_INTENT_KEYWORDS.add("post separation");
+        PAYMENT_INTENT_KEYWORDS.add("after separation");
+        PAYMENT_INTENT_KEYWORDS.add("after divorce");
     }
 
     /**
@@ -112,15 +96,19 @@ public class PaymentEvidenceRoute {
             return properties;
         }
         
-        // TODO: FUTURE ENHANCEMENT - Replace with NER-based property extraction
-        // Current implementation: Simple pattern matching
+        String lower = query.toLowerCase();
         
         // Generic property references
-        if (query.toLowerCase().contains("the property") || 
-            query.toLowerCase().contains("our property") ||
-            query.toLowerCase().contains("marital property") ||
-            query.toLowerCase().contains("family home")) {
+        if (lower.contains("the property") || lower.contains("our property") ||
+            lower.contains("marital property") || lower.contains("family home")) {
             properties.add("GENERIC_PROPERTY");
+            return properties;
+        }
+        
+        // Extract address patterns (simple heuristic for street numbers and names)
+        // e.g., "123 Main St" or "456 Oak Avenue"
+        if (query.matches(".*\\b\\d+\\s+[A-Za-z\\s]+(?:St|Street|Ave|Avenue|Rd|Road|Dr|Drive).*")) {
+            properties.add("ADDRESS_DETECTED");
         }
         
         return properties;
