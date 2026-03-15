@@ -9,6 +9,7 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Drop tables if they exist (in reverse order due to foreign keys)
+DROP TABLE IF EXISTS payment_records;
 DROP TABLE IF EXISTS pdf_chunks;
 DROP TABLE IF EXISTS pdf_documents;
 
@@ -34,6 +35,66 @@ CREATE TABLE IF NOT EXISTS pdf_documents (
 
 -- Index for status-based queries (useful for polling processing pipeline)
 CREATE INDEX IF NOT EXISTS idx_pdf_documents_status ON pdf_documents(status);
+
+-- ============================================================================
+-- Payment Records Table
+-- ============================================================================
+-- Stores structured payment records extracted from mortgage/loan documents.
+-- This is the primary evidence source for payment-related legal queries.
+-- Replaces text-based extraction from PDF chunks.
+CREATE TABLE IF NOT EXISTS payment_records (
+    id BIGSERIAL PRIMARY KEY,
+    pdf_document_id BIGINT NOT NULL REFERENCES pdf_documents(id) ON DELETE CASCADE,
+    
+    -- Statement information
+    statement_index INT,                       -- Which statement in document (0, 1, 2, ...)
+    statement_period_start DATE,               -- Period covered by statement
+    statement_period_end DATE,
+    
+    -- Key payment date
+    payment_date DATE NOT NULL,                -- When payment was due/made
+    
+    -- Payment classification
+    category VARCHAR(50) NOT NULL,             -- mortgage | escrow | tax | insurance | principal | interest
+    
+    -- Amount breakdown (all in BigDecimal)
+    total_amount NUMERIC(16, 2),               -- Total payment amount
+    principal_amount NUMERIC(16, 2),           -- Principal portion
+    interest_amount NUMERIC(16, 2),            -- Interest portion
+    escrow_amount NUMERIC(16, 2),              -- Escrow/impound portion
+    tax_amount NUMERIC(16, 2),                 -- Property tax portion
+    insurance_amount NUMERIC(16, 2),           -- Insurance portion
+    
+    -- Party information
+    payer_name VARCHAR(255),                   -- Who made the payment
+    payee_name VARCHAR(255),                   -- Who received the payment
+    loan_number VARCHAR(100),                  -- Account/loan number
+    
+    -- Property information
+    property_address VARCHAR(500),             -- Full address
+    property_city VARCHAR(100),                -- City name
+    property_state VARCHAR(50),                -- State abbreviation
+    property_zip VARCHAR(20),                  -- ZIP code
+    
+    -- Record details
+    description TEXT,                          -- Human-readable description
+    source_page INT,                           -- Page number in PDF where extracted
+    source_snippet TEXT,                       -- Original text from document
+    confidence NUMERIC(4, 3),                  -- Extraction confidence (0.0-1.0)
+    
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Ensure we don't have duplicate records
+    UNIQUE (pdf_document_id, statement_index, payment_date, category, total_amount)
+);
+
+-- Indexes for common queries
+CREATE INDEX IF NOT EXISTS idx_payment_records_pdf_doc ON payment_records(pdf_document_id);
+CREATE INDEX IF NOT EXISTS idx_payment_records_property_address ON payment_records(property_address);
+CREATE INDEX IF NOT EXISTS idx_payment_records_property_city ON payment_records(property_city);
+CREATE INDEX IF NOT EXISTS idx_payment_records_category ON payment_records(category);
+CREATE INDEX IF NOT EXISTS idx_payment_records_payment_date ON payment_records(payment_date);
+CREATE INDEX IF NOT EXISTS idx_payment_records_category_date ON payment_records(category, payment_date);
 
 -- ============================================================================
 -- PDF Chunks Table

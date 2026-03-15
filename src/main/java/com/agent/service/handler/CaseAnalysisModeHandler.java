@@ -694,25 +694,39 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             
             logger.debug(paymentEvidenceRoute.generateRoutingLog(originalQuery, true, propertyRefs, hasDateFilter));
             
-            // TODO: PAYMENT RECORDS INTEGRATION (Phase 2)
-            // When PaymentRecordRepository is integrated with database:
-            //
-            // try {
-            //     List<PaymentRecord> paymentRecords = paymentEvidenceService.getPaymentsByProperty(
-            //         propertyAddress, propertyCity);
-            //     
-            //     if (!paymentRecords.isEmpty()) {
-            //         logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] Found {} payment records", paymentRecords.size());
-            //         return convertPaymentRecordsToChunks(paymentRecords);
-            //     } else {
-            //         logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] No payment records found - falling back to chunks");
-            //     }
-            // } catch (Exception e) {
-            //     logger.warn("[CASE_ANALYSIS_PAYMENT_ROUTING] PaymentEvidenceService error - fallback to chunks", e);
-            // }
-            //
-            // CURRENT (Phase 1): Payment detection is in place, but actual payment_records
-            // lookup is not yet implemented. This serves as integration point for future phases.
+            // PAYMENT RECORDS INTEGRATION (Phase 2) - IMPLEMENTED
+            if (!propertyRefs.isEmpty()) {
+                try {
+                    String propertyAddress = propertyRefs.get(0);
+                    String propertyCity = null;
+                    if (propertyRefs.size() > 1) {
+                        propertyCity = propertyRefs.get(1);
+                    }
+                    
+                    List<PaymentRecord> paymentRecords = propertyCity != null ?
+                        paymentEvidenceService.getPaymentsByProperty(propertyAddress, propertyCity) :
+                        paymentEvidenceService.getPaymentsByProperty(propertyAddress, "");
+                    
+                    if (!paymentRecords.isEmpty()) {
+                        logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] Found {} payment records for property", 
+                            paymentRecords.size());
+                        List<EvidenceChunk> paymentChunks = convertPaymentRecordsToChunks(paymentRecords);
+                        
+                        // Merge payment chunks with any chunk-based evidence
+                        if (paymentChunks != null && !paymentChunks.isEmpty()) {
+                            logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] Using {} payment-sourced evidence chunks",
+                                paymentChunks.size());
+                            return paymentChunks;
+                        }
+                    } else {
+                        logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] No payment records found - falling back to chunks");
+                    }
+                } catch (Exception e) {
+                    logger.warn("[CASE_ANALYSIS_PAYMENT_ROUTING] Error querying payment records - fallback to chunks", e);
+                }
+            } else {
+                logger.debug("[CASE_ANALYSIS_PAYMENT_ROUTING] No property references extracted from query");
+            }
         }
         
         // ===== CHUNK-BASED RETRIEVAL (Current implementation) =====
@@ -3571,5 +3585,84 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         }
         
         return filtered;
+    }
+
+    /**
+     * Convert PaymentRecord objects to EvidenceChunk format for unified processing.
+     * 
+     * Represents each payment record as a text-based evidence chunk so it can flow 
+     * through the existing fact extraction pipeline (which expects EvidenceChunk objects).
+     * 
+     * @param records Payment records from structured payment_records table
+     * @return List of EvidenceChunk objects representing payment facts
+     */
+    private List<EvidenceChunk> convertPaymentRecordsToChunks(List<PaymentRecord> records) {
+        logger.debug("[PAYMENT_RECORDS_CONVERSION] Converting {} payment records to evidence chunks", records.size());
+        
+        List<EvidenceChunk> chunks = new ArrayList<>();
+        long artifactialChunkId = 0L; // Use negative IDs for synthetic payment record chunks
+        
+        for (PaymentRecord record : records) {
+            // Format payment record as readable text evidence
+            StringBuilder paymentText = new StringBuilder();
+            paymentText.append(String.format("Payment Record - Property: %s", record.getPropertyAddress()));
+            
+            if (record.getPropertyCity() != null) {
+                paymentText.append(String.format(", %s", record.getPropertyCity()));
+            }
+            paymentText.append("\n");
+            
+            if (record.getPaymentDate() != null) {
+                paymentText.append(String.format("Payment Date: %s\n", record.getPaymentDate()));
+            }
+            
+            if (record.getTotalAmount() != null) {
+                paymentText.append(String.format("Total Amount: $%s\n", record.getTotalAmount()));
+            }
+            
+            if (record.getPrincipalAmount() != null && record.getPrincipalAmount().signum() > 0) {
+                paymentText.append(String.format("Principal: $%s\n", record.getPrincipalAmount()));
+            }
+            
+            if (record.getInterestAmount() != null && record.getInterestAmount().signum() > 0) {
+                paymentText.append(String.format("Interest: $%s\n", record.getInterestAmount()));
+            }
+            
+            if (record.getCategory() != null) {
+                paymentText.append(String.format("Category: %s\n", record.getCategory()));
+            }
+            
+            if (record.getSourceSnippet() != null) {
+                paymentText.append(String.format("Source: %s\n", record.getSourceSnippet()));
+            }
+            
+            // Create evidence chunk from payment record
+            double confidence = record.getConfidence() != null ? record.getConfidence() : 0.8;
+            Integer pageNo = record.getSourcePage() != null ? record.getSourcePage() : 0;
+            
+            EvidenceChunk chunk = new EvidenceChunk(
+                artifactialChunkId++,                    // chunk_id: synthetic ID for payment records
+                record.getPdfDocumentId() != null ? record.getPdfDocumentId() : 0L,  // doc_id
+                "PAYMENT_RECORD",                         // filename: synthetic source indicator
+                pageNo,                                   // page_no
+                pageNo,                                   // page_start
+                pageNo,                                   // page_end
+                paymentText.toString(),                   // text: formatted payment info
+                confidence,                               // similarity: use confidence as relevance score
+                "",                                       // rawText
+                confidence,                               // vectorScore: use confidence
+                confidence,                               // keywordScore: use confidence
+                confidence                                // finalScore: use confidence
+            );
+            
+            logger.debug("[PAYMENT_RECORDS_CONVERSION] Converted PaymentRecord to EvidenceChunk: " +
+                "property={}, amount={}, confidence={}", 
+                record.getPropertyAddress(), record.getTotalAmount(), confidence);
+            
+            chunks.add(chunk);
+        }
+        
+        logger.debug("[PAYMENT_RECORDS_CONVERSION] Conversion complete: {} chunks created", chunks.size());
+        return chunks;
     }
 }
