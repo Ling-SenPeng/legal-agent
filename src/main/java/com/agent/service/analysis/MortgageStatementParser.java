@@ -15,34 +15,26 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Service for parsing structured mortgage statements.
+ * DEPRECATED: Text-based parsing of mortgage statements.
  * 
- * DEPRECATION NOTICE (Phase 2+):
- * =============================
- * This class performs TEXT-BASED parsing of mortgage statements. When the payment_records
- * table is reliably populated from structured data sources, this parser becomes
- * a fallback-only utility.
+ * This service is now deprecated in favor of structured PaymentRecord queries from the payment_records table.
+ * As of Phase 3, CaseAnalysisModeHandler uses DB-backed PaymentRecord data exclusively.
  * 
- * CLEANUP PLAN:
- * - [ ] Once payment_records table eliminates OCR dependency, mark @Deprecated
- * - [ ] Reduce usage to fallback scenarios only
- * - [ ] Document conditions requiring statement parsing vs. structured records
- * - [ ] Consider retiring if structured sources are reliable
+ * Deprecation Status (Phase 3):
+ * ✅ COMPLETED - Structured payment_records table eliminates OCR dependency
+ * ✅ COMPLETED - CaseAnalysisModeHandler no longer uses text-based statement parsing
+ * ✅ COMPLETED - Fallback scenarios only (documents with OCR artifacts, historical statements)
  * 
- * NOTE: DO NOT DELETE YET - Still needed for:
- * - Documents with OCR artifacts
- * - Historical statements not yet ingested to payment_records
- * - Testing statement parsing accuracy
+ * Keep this service for:
+ * - Documents with severe OCR artifacts requiring manual parsing
+ * - Historical statements not yet ingested to payment_records table
+ * - Testing and validation of statement parsing accuracy
+ * - Legacy fallback when structured records unavailable
  * 
- * Current use: Extractcts payment records from mortgage statements, ensuring fields
- * are only bound when they occur within the same payment block.
- * 
- * Detects blocks like:
- * - "transaction activity"
- * - "date paid description principal interest escrow total"
- * 
- * And extracts structured MortgagePaymentRecord entries.
+ * Do NOT use this service in new code. Always use PaymentEvidenceService methods instead.
+ * Current method parsePayments() is retained for backward compatibility only.
  */
+@Deprecated(since = "Phase 3", forRemoval = false)
 @Service
 public class MortgageStatementParser {
     private static final Logger logger = LoggerFactory.getLogger(MortgageStatementParser.class);
