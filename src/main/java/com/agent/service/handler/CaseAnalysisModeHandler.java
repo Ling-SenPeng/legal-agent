@@ -73,10 +73,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private final AuthorityRetrievalService authorityRetrievalService;
     private final AuthoritySummarizer authoritySummarizer;
     private final FactClassifier factClassifier;
-    private final PaymentRecordExtractor paymentRecordExtractor;
     private final ClaimStrengthCalculator claimStrengthCalculator;
     private final CounterArgumentFilter counterArgumentFilter;
-    private final MortgageStatementParser mortgageStatementParser;
     private final PropertyAwareCaseAnalysis propertyAwareCaseAnalysis;
     private final PropertyScopeDetector propertyScopeDetector;
     
@@ -107,10 +105,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         AuthorityRetrievalService authorityRetrievalService,
         AuthoritySummarizer authoritySummarizer,
         FactClassifier factClassifier,
-        PaymentRecordExtractor paymentRecordExtractor,
         ClaimStrengthCalculator claimStrengthCalculator,
         CounterArgumentFilter counterArgumentFilter,
-        MortgageStatementParser mortgageStatementParser,
         PropertyAwareCaseAnalysis propertyAwareCaseAnalysis,
         PropertyScopeDetector propertyScopeDetector
     ) {
@@ -125,10 +121,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         this.authorityRetrievalService = authorityRetrievalService;
         this.authoritySummarizer = authoritySummarizer;
         this.factClassifier = factClassifier;
-        this.paymentRecordExtractor = paymentRecordExtractor;
         this.claimStrengthCalculator = claimStrengthCalculator;
         this.counterArgumentFilter = counterArgumentFilter;
-        this.mortgageStatementParser = mortgageStatementParser;
         this.propertyAwareCaseAnalysis = propertyAwareCaseAnalysis;
         this.propertyScopeDetector = propertyScopeDetector;
     }

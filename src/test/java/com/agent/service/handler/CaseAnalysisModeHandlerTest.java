@@ -101,10 +101,8 @@ class CaseAnalysisModeHandlerTest {
         var realAuthorityRetrievalService = new AuthorityRetrievalService(java.util.Optional.empty());
         var realAuthoritySummarizer = new AuthoritySummarizer();
         var testFactClassifier = new TestFactClassifier();
-        var realPaymentRecordExtractor = new com.agent.service.extraction.PaymentRecordExtractor();
         var realClaimStrengthCalculator = new ClaimStrengthCalculator();
         var realCounterArgumentFilter = new CounterArgumentFilter();
-        var realMortgageStatementParser = new MortgageStatementParser();
         
         // Create PaymentEvidenceRoute for payment detection
         var paymentEvidenceRoute = new com.agent.service.PaymentEvidenceRoute();
@@ -129,10 +127,8 @@ class CaseAnalysisModeHandlerTest {
             realAuthorityRetrievalService,
             realAuthoritySummarizer,
             testFactClassifier,
-            realPaymentRecordExtractor,
             realClaimStrengthCalculator,
             realCounterArgumentFilter,
-            realMortgageStatementParser,
             propertyAwareCaseAnalysis,
             propertyScopeDetector
         );

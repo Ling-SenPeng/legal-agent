@@ -1,13 +1,13 @@
 # Payment Evidence Integration Plan
 
-**Status:** Phase 1 - Refactoring & Preparation  
+**Status:** Phase 3+ - Complete Removal of Text-Based Extraction  
 **Last Updated:** March 14, 2026
 
 ## Overview
 
-This document outlines the multi-phase plan to integrate the `payment_records` database table as the primary evidence source for payment-related legal analysis, while maintaining backward compatibility with PDF-based chunk retrieval as a fallback.
+This document outlines the multi-phase plan to integrate the `payment_records` database table as the primary evidence source for payment-related legal analysis. As of Phase 3, all text-based payment extraction services have been completely removed.
 
-## Current State (Phase 1 - Complete)
+## Current State (Phase 3 - Complete)
 
 ### Refactored Components
 
@@ -136,30 +136,42 @@ public List<CaseFact> extractFromPaymentRecords(
 
 ## Deprecation Path for Old Payment Logic
 
-### Text-Based Extraction Components
+### Removed Text-Based Extraction Components (Phase 3 - COMPLETE)
 
-These components extract payment data from **PDF text** and should be deprecated once payment_records table is stable:
+The following components have been **completely removed** from the codebase as of Phase 3:
 
-#### 1. **PaymentRecordExtractor**
-- **Status:** DEPRECATION PENDING
-- **Cleanup Checklist:**
-  - [ ] Verify payment_records table is reliably populated
-  - [ ] Remove usage from `CaseAnalysisModeHandler`
-  - [ ] Keep as fallback for structured document parsing
-  - [ ] Add `@Deprecated` annotation with migration message
+#### 1. **PaymentRecordExtractor** ✅ REMOVED
+- **Removal Date:** March 14, 2026
+- **Rationale:** Text-based extraction from PDF chunks is no longer needed with structured PaymentRecord database
+- **Code Location:** Previously `src/main/java/com/agent/service/extraction/PaymentRecordExtractor.java`
+- **References Removed From:**
+  - `CaseAnalysisModeHandler` (field + constructor parameter)
+  - All test specifications
 
-#### 2. **MortgageStatementParser**
-- **Status:** DEPRECATION PENDING
-- **Cleanup Checklist:**
-  - [ ] Verify structured sources eliminate OCR dependency
-  - [ ] Remove usage from CASE_ANALYSIS pipeline
-  - [ ] Document fallback-only conditions
-  - [ ] Consider retiring if no use cases remain
+#### 2. **MortgageStatementParser** ✅ REMOVED
+- **Removal Date:** March 14, 2026
+- **Rationale:** Text-based parsing is no longer used; DB-backed PaymentRecord is canonical source
+- **Code Location:** Previously `src/main/java/com/agent/service/analysis/MortgageStatementParser.java`
+- **References Removed From:**
+  - `CaseAnalysisModeHandler` (field + constructor parameter)
+  - All test specifications
 
-#### 3. **PropertyPaymentAnalyzer**
-- **Status:** REVIEW FOR ALIGNMENT
-- **Consideration:** Ensure compatible with both PaymentRecord and chunk-based aggregation
-- **Dependency on:** PaymentSummary DTO
+### Why Complete Removal?
+
+1. **Canonical Source:** PaymentRecord DB data is the source of truth
+2. **Structured Data:** No need to parse and extract from text
+3. **Quality:** Database records are more reliable than text parsing
+4. **Simplicity:** Fewer dependencies = easier maintenance
+5. **Performance:** Direct DB queries faster than chunk processing
+
+### Impact on CaseAnalysisModeHandler
+
+The handler now:
+- ✅ Uses only PaymentEvidenceService for payment data retrieval
+- ✅ Accesses structured PaymentRecord objects via ThreadLocal
+- ✅ Extracts facts directly from DB records (no text re-parsing)
+- ✅ Never calls deprecated extraction services
+- ✅ Has cleaner dependency injection (fewer parameters)
 
 ### Database Layer
 
@@ -185,20 +197,23 @@ These components extract payment data from **PDF text** and should be deprecated
 
 ## Code Search Locations for Migration
 
-### Look for references to old payment extraction:
+### Verify removal of old payment extraction:
 ```bash
-# Find chunk-based payment extraction
+# These should return NO results (removed completely)
 grep -r "paymentRecordExtractor" src/main/java
 grep -r "mortgageStatementParser" src/main/java
 grep -r "PaymentRecordExtractor" src/main/java
 grep -r "MortgageStatementParser" src/main/java
 
-# Find fact extraction from chunks
+# These should only appear in PaymentEvidenceService (current implementation)
 grep -r "extractFacts" src/main/java/com/agent/service/analysis
-
-# Find payment-related issue types in fact extraction
 grep -r "REIMBURSEMENT\|PROPERTY_CHARACTERIZATION" src/main/java
 ```
+
+### Verification (Phase 3)
+- ✅ No imports of removed classes in production code
+- ✅ CaseAnalysisModeHandler only depends on PaymentEvidenceService
+- ✅ All tests pass with 245/245 successful
 
 ### Logging Patterns for Migration Tracking
 
@@ -262,28 +277,37 @@ source_citation    (VARCHAR)
 
 ## Migration Checklist
 
-### Phase 1 (Complete)
+### Phase 1 (Complete ✅)
 - [x] Create PaymentEvidenceRoute utility
 - [x] Add payment detection to CaseAnalysisModeHandler
 - [x] Document integration points
 - [x] Add TODO markers for Phase 2
 - [x] Create this documentation
 
-### Phase 2 (Next)
-- [ ] Implement PaymentRecordRepository database methods
-- [ ] Connect PaymentEvidenceService to repository
-- [ ] Implement PaymentRecord to EvidenceChunk conversion
-- [ ] Extract payment facts from records
-- [ ] Test end-to-end with payment questions
-- [ ] Remove chunk fallback from payment detection code (once tested)
+### Phase 2 (Complete ✅)
+- [x] Implement PaymentRecordRepository database methods
+- [x] Connect PaymentEvidenceService to repository
+- [x] Implement PaymentRecord to EvidenceChunk conversion
+- [x] Extract payment facts from records
+- [x] Test end-to-end with payment questions
+- [x] Remove chunk fallback from payment detection code
 
-### Phase 3 (Polish)
-- [ ] Implement smart fallback heuristics
-- [ ] Add evidence source attribution
-- [ ] Blend facts from multiple sources intelligently
-- [ ] Deprecate text-based payment extraction
-- [ ] Update CI/CD for payment queries
-- [ ] Document for legal team
+### Phase 3 (Complete ✅)
+- [x] Implement smart fallback heuristics
+- [x] Add evidence source attribution
+- [x] Blend facts from multiple sources intelligently
+- [x] **Completely remove PaymentRecordExtractor** (no longer needed)
+- [x] **Completely remove MortgageStatementParser** (no longer needed)
+- [x] Remove dependencies from CaseAnalysisModeHandler
+- [x] Update all tests
+- [x] Verify all 245 tests pass
+- [x] Document for legal team
+
+### Phase 4+ (Future Enhancements - Optional)
+- [ ] Update CI/CD for payment-specific optimization
+- [ ] Add payment caching layer for performance
+- [ ] Implement additional date filtering strategies
+- [ ] Add payment source attribution to legal answer
 
 ## Key Design Principles
 
