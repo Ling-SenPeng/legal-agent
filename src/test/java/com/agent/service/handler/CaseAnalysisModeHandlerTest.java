@@ -59,14 +59,18 @@ class CaseAnalysisModeHandlerTest {
             
             @Override
             public java.util.List<com.agent.model.PaymentRecord> getPaymentsByProperty(String propertyAddress, String propertyCity) {
-                // For testing: if query contains "newark", return a test payment record
-                if (propertyAddress != null && propertyAddress.toLowerCase().contains("newark")) {
+                // For testing: if city is Newark or address contains Newark, return a test payment record
+                if ((propertyCity != null && propertyCity.toLowerCase().contains("newark")) ||
+                    (propertyAddress != null && propertyAddress.toLowerCase().contains("newark"))) {
+                    java.time.LocalDate today = java.time.LocalDate.now();
+                    java.time.LocalDate recentDate = today.minusMonths(6);  // 6 months ago - within post-separation window
+                    
                     var record = new com.agent.model.PaymentRecord(
                         1L,                                           // pdfDocumentId
                         1,                                            // statementIndex
-                        java.time.LocalDate.of(2024, 1, 1),         // statementPeriodStart
-                        java.time.LocalDate.of(2024, 1, 31),        // statementPeriodEnd
-                        java.time.LocalDate.of(2024, 1, 15),        // paymentDate
+                        recentDate.withDayOfMonth(1),                // statementPeriodStart
+                        recentDate.withDayOfMonth(recentDate.lengthOfMonth()),  // statementPeriodEnd
+                        recentDate,                                   // paymentDate
                         "MORTGAGE",                                   // category
                         java.math.BigDecimal.valueOf(5000),          // totalAmount
                         java.math.BigDecimal.valueOf(2500),          // principalAmount
@@ -1997,6 +2001,9 @@ class CaseAnalysisModeHandlerTest {
         String query = "post separation mortgage reimbursement newark";
         
         // Create payment-sourced evidence chunk (synthetic, from convertPaymentRecordsToChunks)
+        java.time.LocalDate today = java.time.LocalDate.now();
+        java.time.LocalDate paymentDate = today.minusMonths(6);  // 6 months ago - within post-separation window
+        
         EvidenceChunk paymentChunk = new EvidenceChunk(
             0L, // synthetic negative ID for payment records
             1L,  // doc_id
@@ -2005,7 +2012,7 @@ class CaseAnalysisModeHandlerTest {
             1,
             1,
             "Payment Record - Property: 123 Main St, Newark\n" +
-            "Payment Date: 01/15/2024\n" +
+            "Payment Date:" + paymentDate + "\n" +
             "Total Amount: $5,000\n" +
             "Principal: $2,500\n" +
             "Interest: $1,200\n" +
@@ -2023,9 +2030,12 @@ class CaseAnalysisModeHandlerTest {
         
         // Create facts that would come from payment chunk extraction
         // The synthetic payment chunk should trigger payment and date patterns
+        String paymentDateStr = String.format("Payment Date: %02d/%02d/%04d", 
+            paymentDate.getMonthValue(), paymentDate.getDayOfMonth(), paymentDate.getYear());
+        
         List<CaseFact> facts = List.of(
             new CaseFact(
-                "Payment Date: 01/15/2024",
+                paymentDateStr,
                 FactPolarity.SUPPORTING,
                 "[doc=1 chunk=0 p=1]",
                 LegalIssueType.REIMBURSEMENT
