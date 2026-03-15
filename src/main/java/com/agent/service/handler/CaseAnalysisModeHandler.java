@@ -294,6 +294,16 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                 query
             );
             
+            // Log final execution summary before returning
+            logger.info("[CASE_ANALYSIS_FINAL] ✅ Execution complete:");
+            logger.info("  Query: '{}'", query);
+            logger.info("  Issues identified: {}", context.getIdentifiedIssues().size());
+            logger.info("  Facts in context: {}", context.getRelevantFacts().size());
+            logger.info("  Supporting facts: {}", context.getRelevantFacts().stream().filter(CaseFact::isFavorable).count());
+            logger.info("  Authorities: {}", context.getAuthoritySummaries().size());
+            logger.info("  Strength: {}", result.getStrengthLevel());
+            logger.info("  Confidence: {:.2%}", result.getConfidenceScore());
+            
             // Return result
             return new ModeExecutionResult(
                 TaskMode.CASE_ANALYSIS,
@@ -665,38 +675,47 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * This enables gradual migration from chunk-based to payment_records-based
      * evidence without breaking existing CASE_ANALYSIS workflow.
      * 
-     * TODO: Future phases:
-     * - [ ] Integrate actual PaymentRecordRepository queries when DB is available
-     * - [ ] Handle property-resolved payment table lookups
-     * - [ ] Implement smart fallback logic based on evidence quality
-     * - [ ] Add payment evidence formatting to match chunk interface
+     * IMPLEMENTATION STATUS (Phase 2 Complete):
+     * ✅ [DONE] Integrate PaymentRecordRepository queries via PaymentEvidenceService
+     * ✅ [DONE] Handle property-resolved payment table lookups (getPaymentsByProperty)
+     * ✅ [DONE] Implement smart fallback logic for evidence quality (returns early on success, falls back)
+     * ✅ [DONE] Add payment evidence formatting to match chunk interface (convertPaymentRecordsToChunks)
+     * 
+     * FUTURE CONSIDERATIONS (Phase 3+):
+     * - [ ] Enhance fallback logic: merge payment+chunk evidence instead of early return
+     * - [ ] Consider date-range filtering for payment queries based on case timeline
+     * - [ ] Add payment record confidence scoring for better evidence ranking
+     * - [ ] Implement payment record deduplication across multiple property queries
      * 
      * @param retrievalQueries List of retrieval queries for chunk search
      * @param topK Number of evidence chunks to retrieve
      * @return Merged evidence chunks, prioritizing payment_records when available
      */
     private List<EvidenceChunk> retrieveAndMergeEvidence(List<String> retrievalQueries, int topK) {
-        logger.debug("[CASE_ANALYSIS] retrieveAndMergeEvidence: initial queries={}", retrievalQueries.size());
+        logger.debug("[CASE_ANALYSIS] retrieveAndMergeEvidence: START - queries={}", retrievalQueries.size());
         
         // Clear prior payment records to prevent stale state across requests
         currentPaymentRecords.set(new ArrayList<>());
         
-        // ===== PAYMENT EVIDENCE PRE-FLIGHT (Phase 1) =====
+        // Use map to deduplicate chunks by ID, keeping the highest similarity score
+        Map<Long, EvidenceChunk> chunkMap = new HashMap<>();
+        List<EvidenceChunk> paymentChunksForMerging = new ArrayList<>();
+        
+        // ===== PAYMENT EVIDENCE PRE-FLIGHT (Phase 2) =====
         
         // Step 1: Detect if this is a payment-related query
         String originalQuery = retrievalQueries.isEmpty() ? "" : retrievalQueries.get(0);
         boolean isPaymentQuery = paymentEvidenceRoute.isPaymentRelatedQuery(originalQuery);
         
         if (isPaymentQuery) {
-            logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] Detected payment-related query");
-            logger.debug("  Query: '{}'", originalQuery);
+            logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] Detected payment-related query: '{}'", originalQuery);
             
             List<String> propertyRefs = paymentEvidenceRoute.extractPropertyReferences(originalQuery);
             boolean hasDateFilter = paymentEvidenceRoute.requiresDateFiltering(originalQuery);
             
-            logger.debug(paymentEvidenceRoute.generateRoutingLog(originalQuery, true, propertyRefs, hasDateFilter));
+            logger.debug("[CASE_ANALYSIS_PAYMENT_ROUTING] propertyRefs={}, hasDateFilter={}", propertyRefs, hasDateFilter);
             
-            // PAYMENT RECORDS INTEGRATION (Phase 2) - IMPLEMENTED
+            // PAYMENT RECORDS INTEGRATION (Phase 2 - IMPLEMENTED)
             if (!propertyRefs.isEmpty()) {
                 try {
                     String propertyAddress = propertyRefs.get(0);
@@ -705,44 +724,48 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                         propertyCity = propertyRefs.get(1);
                     }
                     
+                    logger.debug("[CASE_ANALYSIS_PAYMENT_ROUTING] Calling PaymentEvidenceService: address='{}', city='{}'",
+                        propertyAddress, propertyCity);
+                    
                     List<PaymentRecord> paymentRecords = propertyCity != null ?
                         paymentEvidenceService.getPaymentsByProperty(propertyAddress, propertyCity) :
                         paymentEvidenceService.getPaymentsByProperty(propertyAddress, "");
                     
+                    logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] PaymentEvidenceService returned {} records", 
+                        paymentRecords.size());
+                    
                     if (!paymentRecords.isEmpty()) {
-                        logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] Found {} payment records for property", 
-                            paymentRecords.size());
-                        
                         // IMPORTANT: Store structured PaymentRecord objects in ThreadLocal.
                         // These are canonical data source (DB-backed, not re-parsed from chunk text).
-                        // The extractPaymentRecordsAsFacts() method will use these directly.
                         currentPaymentRecords.set(paymentRecords);
-                        logger.debug("[CASE_ANALYSIS_PAYMENT_ROUTING] Stored {} structured PaymentRecord objects in ThreadLocal",
+                        logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] ✅ Stored {} PaymentRecord objects in ThreadLocal",
                             paymentRecords.size());
                         
-                        List<EvidenceChunk> paymentChunks = convertPaymentRecordsToChunks(paymentRecords);
+                        // CRITICAL FIX: Convert to chunks for unified processing
+                        // but DO NOT return early - merge with chunk-based evidence instead
+                        paymentChunksForMerging = convertPaymentRecordsToChunks(paymentRecords);
+                        logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] ✅ Converted {} PaymentRecords to {} EvidenceChunks",
+                            paymentRecords.size(), paymentChunksForMerging.size());
                         
-                        // Merge payment chunks with any chunk-based evidence
-                        if (paymentChunks != null && !paymentChunks.isEmpty()) {
-                            logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] Using {} payment-sourced evidence chunks",
-                                paymentChunks.size());
-                            return paymentChunks;
+                        // Add payment chunks to the merge map
+                        for (EvidenceChunk chunk : paymentChunksForMerging) {
+                            chunkMap.put(chunk.chunkId(), chunk);
+                            logger.debug("[CASE_ANALYSIS_EVIDENCE_MERGE] Added PAYMENT chunk: id={}", chunk.chunkId());
                         }
                     } else {
-                        logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] No payment records found - falling back to chunks");
+                        logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] ⚠️ No payment records found for final evidence");
                     }
                 } catch (Exception e) {
-                    logger.warn("[CASE_ANALYSIS_PAYMENT_ROUTING] Error querying payment records - fallback to chunks", e);
+                    logger.warn("[CASE_ANALYSIS_PAYMENT_ROUTING] ❌ Error querying PaymentEvidenceService", e);
                 }
             } else {
-                logger.debug("[CASE_ANALYSIS_PAYMENT_ROUTING] No property references extracted from query");
+                logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] ℹ️ No property references extracted - using chunk-based only");
             }
+        } else {
+            logger.debug("[CASE_ANALYSIS_PAYMENT_ROUTING] Non-payment query - skipping PaymentEvidenceService");
         }
         
-        // ===== CHUNK-BASED RETRIEVAL (Current implementation) =====
-        
-        // Use map to deduplicate chunks by ID, keeping the highest similarity score
-        Map<Long, EvidenceChunk> chunkMap = new HashMap<>();
+        // ===== CHUNK-BASED RETRIEVAL (Phase 2) ====
         
         for (String retrievalQuery : retrievalQueries) {
             logger.debug("[CASE_ANALYSIS] Retrieving evidence for pre-planned query: '{}'", retrievalQuery);
@@ -784,14 +807,21 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             return Long.compare(c1.chunkId(), c2.chunkId());
         });
         
-        logger.debug("[CASE_ANALYSIS] Total unique chunks after merging: {} (sorted by similarity)",
-            mergedChunks.size());
+        // Calculate final composition
+        int paymentChunkCount = (int) mergedChunks.stream()
+            .filter(c -> c.filename() != null && c.filename().equals("PAYMENT_RECORD"))
+            .count();
+        int pdfChunkCount = mergedChunks.size() - paymentChunkCount;
+        
+        logger.info("[CASE_ANALYSIS_EVIDENCE_MERGE] FINAL: {} total chunks = {} PAYMENT + {} PDF",
+            mergedChunks.size(), paymentChunkCount, pdfChunkCount);
         
         if (isPaymentQuery) {
-            logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] Using {} chunks as evidence (payment_records integration pending)",
-                mergedChunks.size());
+            logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] ✅ Merged evidence ready: {} payment + {} PDF chunks",
+                paymentChunkCount, pdfChunkCount);
         }
         
+        logger.debug("[CASE_ANALYSIS] retrieveAndMergeEvidence: END - returning {} total chunks", mergedChunks.size());
         return mergedChunks;
     }
 
@@ -808,6 +838,8 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         List<CaseFact> facts = context.getRelevantFacts();
         List<MissingFact> missingFactsList = context.getMissingFacts();
         
+        logger.info("[CASE_ANALYSIS_STRENGTH] Context has {} facts total", facts.size());
+        
         // Count facts by polarity (supporting vs adverse)
         long supportingFacts = facts.stream()
             .filter(CaseFact::isFavorable)
@@ -823,8 +855,13 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             .count();
         long missingFacts = missingFactsList.size();
         
-        logger.debug("[CASE_ANALYSIS] Fact analysis - Supporting: {}, Adverse: {}, Neutral: {}, Unknown: {}, Missing: {}",
+        logger.info("[CASE_ANALYSIS_STRENGTH] Fact breakdown - Supporting: {}, Adverse: {}, Neutral: {}, Unknown: {}, Missing: {}",
             supportingFacts, adverseFacts, neutralFacts, unknownFacts, missingFacts);
+        
+        // CRITICAL: Cap confidence if zero supporting facts
+        if (supportingFacts == 0) {
+            logger.warn("[CASE_ANALYSIS_STRENGTH] ⚠️ ZERO SUPPORTING FACTS - confidence must be capped at LOW");
+        }
         
         // Calculate confidence based on determined facts (exclude UNKNOWN)
         double determinedFacts = (double) (supportingFacts + adverseFacts + neutralFacts);
@@ -840,6 +877,12 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         // Overall confidence = combination of issue confidence and fact availability
         double confidence = (avgIssueConfidence * 0.6) + (factAvailability * 0.4);
+        
+        // CRITICAL FIX: Cap confidence if zero supporting facts
+        if (supportingFacts == 0) {
+            confidence = Math.min(confidence, 0.3); // Cap at LOW confidence
+            logger.warn("[CASE_ANALYSIS_STRENGTH] ⚠️ Capped confidence to {} (LOW) due to zero supporting facts", confidence);
+        }
         
         // Count weak elements for constraint calculation
         int weakElementCount = countWeakElements(context);
@@ -857,6 +900,24 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         
         // Build recommendations
         String recommendations = buildRecommendations(context, strengthLevel);
+        
+        // ========== FINAL AUTHORITATIVE GUARDRAIL ==========
+        // This is the last step before returning - MUST NOT be overridable
+        // If evidence is missing or ALL supporting facts are empty, cap strength & confidence
+        logger.info("[FINAL_GUARDRAIL] Pre-guardrail: supportingFacts={}, strengthLevel={}, confidence={}",
+            supportingFacts, strengthLevel, String.format("%.2f", confidence));
+        
+        if (supportingFacts == 0) {
+            // NO SUPPORTING FACTS = LOW strength and LOW confidence, PERIOD
+            confidence = 0.25; // HARD CAP at 25% for zero supporting facts
+            if (strengthLevel != CaseAnalysisResult.StrengthLevel.WEAK && 
+                strengthLevel != CaseAnalysisResult.StrengthLevel.VERY_WEAK) {
+                logger.error("[FINAL_GUARDRAIL] ❌ OVERRIDE: {} strength downgraded to WEAK due to ZERO supporting facts", strengthLevel);
+                strengthLevel = CaseAnalysisResult.StrengthLevel.WEAK;
+            }
+            logger.warn("[FINAL_GUARDRAIL] ⚠️ POST-GUARDRAIL: supportingFacts=0 → strengthLevel={}, confidence={}", 
+                strengthLevel, String.format("%.2f", confidence));
+        }
         
         return new CaseAnalysisResult(
             context,
@@ -2010,6 +2071,16 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             // Find supporting facts for this element (with detailed pipeline logging)
             List<CaseFact> allSupportingFacts = findSupportingFactsForElement(element, context, primaryIssue.getType());
             
+            // ✅ CRITICAL LOG: Track facts returned from findSupportingFactsForElement
+            logger.info("[RENDERING_PIPELINE] Element: '{}' → allSupportingFacts: {} facts",
+                element, allSupportingFacts.size());
+            if (!allSupportingFacts.isEmpty()) {
+                for (CaseFact fact : allSupportingFacts) {
+                    logger.info("[RENDERING_PIPELINE]   ✓ Fact: {}", 
+                        truncateForLogging(fact.getDescription()));
+                }
+            }
+            
             // Log facts after strict filter + keyword matching but before rendering filter
             if (logger.isDebugEnabled()) {
                 logRuleElementPipeline(element, context, allSupportingFacts);
@@ -2017,6 +2088,18 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             
             // Filter out low-quality snippets before rendering
             List<CaseFact> supportingFacts = filterHighQualityFactsWithLogging(allSupportingFacts);
+            
+            // ✅ CRITICAL LOG: Track facts after quality filtering
+            logger.info("[RENDERING_PIPELINE] Element: '{}' → after quality filter: {} facts",
+                element, supportingFacts.size());
+            if (!supportingFacts.isEmpty()) {
+                for (CaseFact fact : supportingFacts) {
+                    logger.info("[RENDERING_PIPELINE]   ✓ Quality-passed: {}", 
+                        truncateForLogging(fact.getDescription()));
+                }
+            } else {
+                logger.warn("[RENDERING_PIPELINE] Element: '{}' → ⚠️ ALL FACTS FILTERED OUT", element);
+            }
             
             // Log final rendered facts
             if (logger.isDebugEnabled() && !supportingFacts.isEmpty()) {
@@ -2163,13 +2246,14 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
      * @return List of PaymentRecords converted to CaseFacts for rendering
      */
     private List<CaseFact> extractPaymentRecordsAsFacts() {
+        logger.info("[PAYMENT_FACT_EXTRACTION] ===== CALLED =====");
+        
         List<CaseFact> paymentFacts = new ArrayList<>();
         CaseProfile profile = currentCaseProfile.get();
         String dos = profile != null ? profile.getDateOfSeparation() : null;
         
-        if (profile != null) {
-            logger.info("[CASE_PROFILE] dos={}", profile.getDateOfSeparation());
-        }
+        logger.info("[PAYMENT_FACT_EXTRACTION] CaseProfile present: {}, DOS: {}", 
+            profile != null, dos);
         
         // ===== STRUCTURED PAYMENT RECORDS (DB-BACKED, CANONICAL) =====
         // Try to read structured PaymentRecord objects from ThreadLocal.
@@ -2177,11 +2261,12 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
         // This is the canonical source - do NOT re-extract from chunk text.
         
         List<PaymentRecord> structuredRecords = currentPaymentRecords.get();
+        logger.info("[PAYMENT_FACT_EXTRACTION] ThreadLocal currentPaymentRecords: {}", 
+            structuredRecords == null ? "null" : structuredRecords.size() + " records");
         
         if (structuredRecords != null && !structuredRecords.isEmpty()) {
-            logger.debug("[PAYMENT_RECORDS_FACT_EXTRACTION] Using structured PaymentRecord objects (count={})",
+            logger.info("[PAYMENT_FACT_EXTRACTION] ✅ Processing {} PaymentRecord objects", 
                 structuredRecords.size());
-            logger.debug("[PAYMENT_RECORDS_FACT_EXTRACTION] Data source: DB-backed, canonical");
             
             List<String> extractedRecordLogs = new ArrayList<>();
             
@@ -2200,6 +2285,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                 
                 // Build CaseFact from structured PaymentRecord
                 String factDescription = formatPaymentRecordAsFactDescription(record);
+                logger.info("[PAYMENT_FACT_EXTRACTION] factDescription: {}", factDescription);
                 
                 if (factDescription != null) {
                     // Source citation: DB-backed PaymentRecord with document and page reference

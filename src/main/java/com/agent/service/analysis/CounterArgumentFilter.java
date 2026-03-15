@@ -51,7 +51,17 @@ public class CounterArgumentFilter {
         "promotional",
         "special offer",
         "rate buy-down",
-        "financing program"
+        "financing program",
+        // Flood insurance and disaster-related boilerplate (not relevant to family law)
+        "nfip",
+        "national flood insurance",
+        "flood insurance",
+        "flood plain",
+        "flood zone",
+        "flood hazard",
+        "disaster",
+        "federal emergency management",
+        "fema"
     );
     
     /**

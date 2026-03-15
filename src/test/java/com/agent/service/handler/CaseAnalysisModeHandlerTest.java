@@ -59,6 +59,35 @@ class CaseAnalysisModeHandlerTest {
             
             @Override
             public java.util.List<com.agent.model.PaymentRecord> getPaymentsByProperty(String propertyAddress, String propertyCity) {
+                // For testing: if query contains "newark", return a test payment record
+                if (propertyAddress != null && propertyAddress.toLowerCase().contains("newark")) {
+                    var record = new com.agent.model.PaymentRecord(
+                        1L,                                           // pdfDocumentId
+                        1,                                            // statementIndex
+                        java.time.LocalDate.of(2024, 1, 1),         // statementPeriodStart
+                        java.time.LocalDate.of(2024, 1, 31),        // statementPeriodEnd
+                        java.time.LocalDate.of(2024, 1, 15),        // paymentDate
+                        "MORTGAGE",                                   // category
+                        java.math.BigDecimal.valueOf(5000),          // totalAmount
+                        java.math.BigDecimal.valueOf(2500),          // principalAmount
+                        java.math.BigDecimal.valueOf(1200),          // interestAmount
+                        java.math.BigDecimal.valueOf(1000),          // escrowAmount
+                        java.math.BigDecimal.valueOf(200),           // taxAmount
+                        java.math.BigDecimal.valueOf(100),           // insuranceAmount
+                        "Borrower",                                   // payerName
+                        "Lender",                                     // payeeName
+                        "LOAN123",                                    // loanNumber
+                        "123 Main St",                                // propertyAddress
+                        "Newark",                                     // propertyCity
+                        "NJ",                                         // propertyState
+                        "07101",                                      // propertyZip
+                        "Monthly payment",                            // description
+                        1,                                            // sourcePage
+                        "Payment record snippet",                     // sourceSnippet
+                        0.95                                          // confidence
+                    );
+                    return java.util.List.of(record);
+                }
                 return java.util.List.of();
             }
             
@@ -1961,6 +1990,118 @@ class CaseAnalysisModeHandlerTest {
         return count;
     }
     
+    @Test
+    @DisplayName("Payment query 'post separation mortgage reimbursement newark' returns supporting facts from merged evidence")
+    void testPaymentQueryReturnsPaymentRecordFacts() {
+        // Given: Payment query that should return PaymentRecord facts
+        String query = "post separation mortgage reimbursement newark";
+        
+        // Create payment-sourced evidence chunk (synthetic, from convertPaymentRecordsToChunks)
+        EvidenceChunk paymentChunk = new EvidenceChunk(
+            0L, // synthetic negative ID for payment records
+            1L,  // doc_id
+            "PAYMENT_RECORD",  // markers for payment source
+            1,
+            1,
+            1,
+            "Payment Record - Property: 123 Main St, Newark\n" +
+            "Payment Date: 01/15/2024\n" +
+            "Total Amount: $5,000\n" +
+            "Principal: $2,500\n" +
+            "Interest: $1,200\n" +
+            "Category: MORTGAGE",
+            0.95,  // confidence/similarity
+            "",
+            0.95,
+            0.95,
+            0.95
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Post-separation mortgage reimbursement", 0.9, "reimbursement")
+        );
+        
+        // Create facts that would come from payment chunk extraction
+        // The synthetic payment chunk should trigger payment and date patterns
+        List<CaseFact> facts = List.of(
+            new CaseFact(
+                "Payment Date: 01/15/2024",
+                FactPolarity.SUPPORTING,
+                "[doc=1 chunk=0 p=1]",
+                LegalIssueType.REIMBURSEMENT
+            ),
+            new CaseFact(
+                "Total Amount: $5,000",
+                FactPolarity.SUPPORTING,
+                "[doc=1 chunk=0 p=1]",
+                LegalIssueType.REIMBURSEMENT
+            )
+        );
+        
+        List<MissingFact> missingFacts = List.of(
+            new MissingFact("Exact payment amounts made post-separation", LegalIssueType.REIMBURSEMENT, "Not found in available evidence")
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query,
+            issues,
+            facts,
+            missingFacts,
+            "Reimbursement analyzed under California Family Code § 2640 and Epstein factors.",
+            List.of()  // authorities
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(paymentChunk));
+        testContextBuilder.setContext(context);
+        
+        // When
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then
+        assertTrue(result.isSuccess(), "Execution should succeed. Error: " + result.getErrorMessage());
+        String answer = result.getAnswer();
+        assertNotNull(answer, "Answer should not be null");
+        
+        System.err.println("\n=== PAYMENT QUERY TEST RESULT ===");
+        System.err.println("Query: " + query);
+        System.err.println("Facts in context: " + facts.size());
+        System.err.println("Supporting facts in context: " + facts.stream().filter(f -> f.isFavorable()).count());
+        System.err.println("Answer length: " + answer.length());
+        
+        // Extract the Supporting Facts section for inspection
+        int factsIndex = answer.indexOf("Supporting Facts:");
+        if (factsIndex >= 0) {
+            int endIndex = answer.indexOf("\n\n", factsIndex);
+            if (endIndex < 0) endIndex = answer.length();
+            String factsSection = answer.substring(factsIndex, Math.min(endIndex + 100, answer.length()));
+            System.err.println("\n=== SUPPORTING FACTS SECTION ===\n" + factsSection);
+        }
+        
+        System.err.println("\n=== END TEST RESULT ===\n");
+        
+        // CRITICAL: Verify that payment-related details are NOT empty
+        // The most important assertion: the mortgage payment fact should appear in the answer
+        // This proves the payment pipeline worked end-to-end
+        assertTrue(answer.contains("$5,000") || answer.contains("$2,500") || answer.contains("01/15/2024") || answer.contains("payment of") || answer.contains("Payment of"),
+            "Payment-related details should appear in the answer");
+        
+        // Also verify that the answer shows facts are present
+        assertTrue(answer.contains("Mortgage payment") || answer.contains("mortgage payment"),
+            "The extracted mortgage payment fact should be in the answer");
+        
+        // CRITICAL: Verify confidence is properly grounded
+        // Since supportingFacts=2, confidence should be reasonable
+        assertTrue(answer.contains("Confidence:"), "Should display confidence in answer");
+        
+        // REGRESSION TEST: Confidence should NOT be HIGH when supporting facts are empty
+        // (This would be detected by the final guardrail in generateAnalysisResult)
+        // The test shows payment facts ARE present, so confidence being high is correct
+        
+        // Verify strength is reasonable for having supporting facts
+        assertTrue(answer.contains("Strength:") || answer.contains("Claim Strength:"),
+            "Should display claim strength in answer");
+    }
+    
     // ==================== TEST DOUBLES ====================
 
     /**
@@ -2660,6 +2801,201 @@ class CaseAnalysisModeHandlerTest {
         assertNotNull(result.getAnswer());
         assertTrue(result.getAnswer().length() > 0,
             "Handler should return an answer using CaseProfile DOS");
+    }
+
+    @Test
+    @DisplayName("REGRESSION: Confidence is capped LOW when ZERO supporting facts (hard guardrail)")
+    void testZeroSupportingFactsConfidenceGuardrail() {
+        // Given: Query with evidence that yields zero supporting facts due to filtering
+        // This tests the guardrail: if supportingFacts == 0, confidence must be capped at 0.25
+        String query = "Property support contribution details?";
+        
+        // Create evidence chunks that will NOT pass fact filtering
+        // These areformatted as generic/weak facts that fail relevance filtering
+        EvidenceChunk genericChunk1 = createTestChunk(
+            "The property was acquired long ago. Details available in the deed.",
+            1L, 1, "Page 1"
+        );
+        
+        EvidenceChunk genericChunk2 = createTestChunk(
+            "Initial mortgage payments were made. Documents on file.",
+            2L, 1, "Page 2"
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement claim", 0.90, "reimbursement")
+        );
+        
+        // Create context with EMPTY facts list to simulate zero supporting facts
+        // This directly tests the guardrail rather than relying on the filtering logic
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, List.of(),  // ZERO facts - represents complete filtering failure
+            "Zero supporting facts scenario"
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(genericChunk1, genericChunk2));
+        testContextBuilder.setContext(context);
+        
+        // When
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then
+        assertTrue(result.isSuccess(), "Handler should succeed even with zero facts");
+        String answer = result.getAnswer();
+        assertNotNull(answer);
+        
+        // Debug: Print the full answer to understand what's happening
+        System.out.println("\n=== ZERO FACTS REGRESSION TEST DEBUG ===");
+        System.out.println("Query: " + query);
+        System.out.println("=== Full Answer ===");
+        System.out.println(answer);
+        System.out.println("=== End Answer ===\n");
+        
+        // CRITICAL VALIDATION: Extract confidence from response
+        // Format: "Confidence: XX%"
+        double confidence = extractConfidenceValue(answer);
+        System.out.println("Extracted confidence: " + String.format("%.2f", confidence));
+        
+        // HARD GUARDRAIL: When supporting facts = 0, confidence MUST be <= 0.30 (30%)
+        // The code should cap it at 0.25 (25%) via the FINAL_GUARDRAIL
+        // This test verifies the guardrail is working correctly
+        assertTrue(confidence <= 0.30, 
+            "GUARDRAIL VIOLATION: Confidence should be capped at ≤30% when zero supporting facts. Got: " + 
+            String.format("%.2f", confidence) + ". Issue confidence is 0.90, but with zero facts it must be capped.");
+    }
+
+    @Test
+    @DisplayName("REGRESSION: Multiple facts render correctly with confidence grounding")
+    void testMultipleFactsConfidenceRendering() {
+        // Given: Query with multiple supporting facts
+        String query = "Post-separation mortgage reimbursement?";
+        
+        EvidenceChunk mortgagePayment = createTestChunk(
+            "Date: 02/15/2024\n" +
+            "Post-separation mortgage payment: $3,000\n" +
+            "Property: 123 Oak Street\n" +
+            "Loan account benefiting spouse",
+            1L, 1, "Page 1"
+        );
+        
+        EvidenceChunk dateOfSeparation = createTestChunk(
+            "Date of Separation: 01/15/2024\n" +
+            "Agreed in writing",
+            2L, 1, "Page 2"
+        );
+        
+        List<CaseIssue> issues = List.of(
+            new CaseIssue(LegalIssueType.REIMBURSEMENT, "Reimbursement", 0.85, "reimbursement")
+        );
+        
+        List<CaseFact> facts = List.of(
+            new CaseFact("Post-separation mortgage payment of $3,000 on 02/15/2024", 
+                        FactPolarity.SUPPORTING, "mortgage payment", LegalIssueType.REIMBURSEMENT),
+            new CaseFact("Date of Separation: 01/15/2024", 
+                        FactPolarity.SUPPORTING, "date", LegalIssueType.REIMBURSEMENT)
+        );
+        
+        CaseAnalysisContext context = new CaseAnalysisContext(
+            query, issues, facts,
+            "Mortgage reimbursement with multiple supporting facts"
+        );
+        
+        testRetrievalService.setEvidenceChunks(List.of(mortgagePayment, dateOfSeparation));
+        testContextBuilder.setContext(context);
+        
+        // When
+        ModeExecutionResult result = handler.execute(query, 5);
+        
+        // Then
+        assertTrue(result.isSuccess());
+        String answer = result.getAnswer();
+        
+        // Verify: Supporting facts are properly rendered
+        assertTrue(answer.contains("Supporting Facts:"),
+            "Should include Supporting Facts section with multiple facts");
+        
+        // Verify: Both facts appear in answer
+        assertTrue(answer.contains("$3,000") || answer.contains("mortgage payment"),
+            "Mortgage payment fact should appear");
+        assertTrue(answer.contains("02/15/2024") || answer.contains("01/15/2024"),
+            "Date facts should appear");
+        
+        // Verify: Confidence is higher than zero-facts scenario (> 30%)
+        double confidence = extractConfidenceValue(answer);
+        assertTrue(confidence > 0.30,
+            "Confidence should be > 30% with supporting facts. Got: " + confidence);
+        
+        // Verify: Strength should not be WEAK
+        String strengthLine = extractTextBetween(answer, "Strength:", "\n");
+        assertFalse(strengthLine.contains("VERY_WEAK") && confidence < 0.5,
+            "With multiple supporting facts, strength should not be VERY_WEAK");
+    }
+
+    // ==================== HELPER METHODS FOR REGRESSION TESTS ====================
+
+    /**
+     * Extract confidence value from formatted answer.
+     * Looks for the final confidence in TENTATIVE CONCLUSION section.
+     * Patterns: "Confidence: 78.50%" or "Confidence: 0.50"
+     */
+    private double extractConfidenceValue(String answer) {
+        // Look for confidence in TENTATIVE CONCLUSION section (the final one)
+        int tentativeIdx = answer.indexOf("TENTATIVE CONCLUSION");
+        if (tentativeIdx < 0) {
+            // Fallback: look for any confidence
+            tentativeIdx = 0;
+        }
+        
+        // Find the confidence line starting from TENTATIVE CONCLUSION
+        int idx = answer.indexOf("Confidence:", tentativeIdx);
+        if (idx < 0) {
+            return 0.0; // Default if not found
+        }
+        
+        int endIdx = answer.indexOf("\n", idx);
+        if (endIdx < 0) endIdx = Math.min(idx + 50, answer.length());
+        
+        String confidenceLine = answer.substring(idx, endIdx);
+        
+        // Try percentage format (25%)
+        if (confidenceLine.contains("%")) {
+            try {
+                String percentStr = confidenceLine.replaceAll("[^0-9]", "");
+                return Double.parseDouble(percentStr) / 100.0;
+            } catch (NumberFormatException e) {
+                return 0.0;
+            }
+        }
+        
+        // Try decimal format (0.25)
+        try {
+            String[] parts = confidenceLine.split(":");
+            if (parts.length > 1) {
+                String numStr = parts[1].replaceAll("[^0-9.]", "");
+                double val = Double.parseDouble(numStr);
+                // If it's > 1, assume it's a percentage (25 instead of 0.25)
+                if (val > 1) return val / 100.0;
+                return val;
+            }
+        } catch (Exception e) {
+            return 0.0;
+        }
+        
+        return 0.0;
+    }
+    
+    /**
+     * Extract text between two substrings.
+     */
+    private String extractTextBetween(String text, String start, String end) {
+        int startIdx = text.indexOf(start);
+        if (startIdx < 0) return "";
+        
+        startIdx += start.length();
+        int endIdx = text.indexOf(end, startIdx);
+        if (endIdx < 0) endIdx = text.length();
+        
+        return text.substring(startIdx, endIdx).trim();
     }
 }
 

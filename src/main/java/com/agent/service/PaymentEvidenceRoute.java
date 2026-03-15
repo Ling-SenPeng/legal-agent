@@ -111,6 +111,30 @@ public class PaymentEvidenceRoute {
             properties.add("ADDRESS_DETECTED");
         }
         
+        // Extract common US city names if they appear in the query
+        // This handles queries like "post separation mortgage newark" 
+        Set<String> commonCities = new HashSet<>();
+        commonCities.add("newark");
+        commonCities.add("jersey city");
+        commonCities.add("paterson");
+        commonCities.add("trenton");
+        commonCities.add("camden");
+        commonCities.add("atlantic city");
+        commonCities.add("philadelphia");
+        commonCities.add("los angeles");
+        commonCities.add("new york");
+        commonCities.add("san francisco");
+        commonCities.add("chicago");
+        commonCities.add("san diego");
+        commonCities.add("houston");
+        
+        for (String city : commonCities) {
+            if (lower.contains(city)) {
+                properties.add(city);
+                break;  // Return the first matched city
+            }
+        }
+        
         return properties;
     }
 

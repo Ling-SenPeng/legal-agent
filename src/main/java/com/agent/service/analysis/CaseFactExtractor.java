@@ -10,27 +10,41 @@ import java.util.List;
  * Interface for extracting case facts from evidence.
  * 
  * Converts evidence chunks into semantic case facts relevant to
- * legal issues and analysis. * 
- * PAYMENT EVIDENCE INTEGRATION NOTES:
- * ==================================
- * This interface currently works only with EvidenceChunk (PDF-based evidence).
- * Future versions should support PaymentRecord extraction with minimal changes:
+ * legal issues and analysis.
  * 
- * TODO: FUTURE - Add payment record support
+ * PAYMENT EVIDENCE INTEGRATION (Phase 2-3 In Progress):
+ * =====================================================
+ * 
+ * CURRENT ARCHITECTURE (Phase 2):
+ * CaseAnalysisModeHandler.retrieveAndMergeEvidence() converts PaymentRecords to
+ * synthetic EvidenceChunks via convertPaymentRecordsToChunks(). These chunks flow
+ * through the same extraction pipeline as PDF chunks.
+ * 
+ * ISSUE IDENTIFIED:
+ * Synthetic payment chunks may not trigger fact extraction patterns (dates, amounts
+ * are numeric/structured, not natural language). Facts extracted might be minimal.
+ * Additionally, PaymentRecord structured data is stored in ThreadLocal and accessed
+ * later in findSupportingFactsForElement() via extractPaymentRecordsAsFacts().
+ * 
+ * SOLUTION (Phase 3 - To Be Implemented):
  * - [ ] Add method: extractFromPaymentRecords(List<PaymentRecord>, LegalIssueType)
- * - [ ] Implement in RuleBasedCaseFactExtractor
- * - [ ] Convert PaymentRecords to CaseFact with proper source attribution
- * - [ ] Ensure payment facts marked with appropriate evidence source
- * - [ ] Blend facts from both chunks and payment records in context builder
+ *       Direct extraction from structured data avoiding natural language dependency
+ * - [ ] Call extractFromPaymentRecords() in RuleBasedCaseAnalysisContextBuilder
+ *       during buildContextWithAuthorities() when PaymentRecords are available
+ * - [ ] Add payment-specific fact polarity: structured amounts → SUPPORTING for reimbursement
+ * - [ ] Blend PaymentRecord facts with chunk facts before context is returned
+ * - [ ] Remove extractPaymentRecordsAsFacts() from element-specific logic
+ *       (move to context building phase for consistency)
  * 
- * INTEGRATION STRATEGY:
- * 1. CaseAnalysisModeHandler detects payment query (PaymentEvidenceRoute)
- * 2. Calls PaymentEvidenceService to get PaymentRecords
- * 3. Converts PaymentRecords to EvidenceChunk-like format OR
- * 4. Calls extractFromPaymentRecords() directly in context builder
- * 5. Blends payment facts with chunk facts before returning context
+ * INTEGRATION POINTS:
+ * 1. RuleBasedCaseFactExtractor - Add extractFromPaymentRecords() method
+ * 2. RuleBasedCaseAnalysisContextBuilder.buildContextWithAuthorities()
+ *    - Access currentPaymentRecords ThreadLocal
+ *    - Call factExtractor.extractFromPaymentRecords()
+ *    - Add to extractedFacts before context return
+ * 3. CaseAnalysisModeHandler - Pass ThreadLocal reference or use dependency injection
  * 
- * See: paymentEvidenceService, RuleBasedCaseAnalysisContextBuilder */
+ * See: currentPaymentRecords, convertPaymentRecordsToChunks, extractPaymentRecordsAsFacts */
 public interface CaseFactExtractor {
     
     /**
