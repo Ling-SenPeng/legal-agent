@@ -20,11 +20,6 @@ import java.util.regex.Pattern;
  * This service is now deprecated in favor of structured PaymentRecord queries from the payment_records table.
  * As of Phase 3, CaseAnalysisModeHandler uses DB-backed PaymentRecord data exclusively.
  * 
- * Deprecation Status (Phase 3):
- * ✅ COMPLETED - Structured payment_records table eliminates OCR dependency
- * ✅ COMPLETED - CaseAnalysisModeHandler no longer uses text-based statement parsing
- * ✅ COMPLETED - Fallback scenarios only (documents with OCR artifacts, historical statements)
- * 
  * Keep this service for:
  * - Documents with severe OCR artifacts requiring manual parsing
  * - Historical statements not yet ingested to payment_records table
@@ -32,7 +27,6 @@ import java.util.regex.Pattern;
  * - Legacy fallback when structured records unavailable
  * 
  * Do NOT use this service in new code. Always use PaymentEvidenceService methods instead.
- * Current method parsePayments() is retained for backward compatibility only.
  */
 @Deprecated(since = "Phase 3", forRemoval = false)
 @Service

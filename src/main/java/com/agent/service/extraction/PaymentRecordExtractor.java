@@ -16,10 +16,6 @@ import java.util.regex.Pattern;
  * This class is now deprecated in favor of structured PaymentRecord queries from the payment_records table.
  * As of Phase 3, CaseAnalysisModeHandler uses DB-backed PaymentRecord data exclusively.
  * 
- * Deprecation Status (Phase 3):
- * ✅ COMPLETED - PaymentRecordExtractor usage removed from CaseAnalysisModeHandler
- * ✅ COMPLETED - Structured PaymentRecord DB data is now canonical source
- * 
  * Keep this class for:
  * - Legacy edge cases or fallback extraction if needed in future
  * - Testing and validation of OCR accuracy
@@ -27,13 +23,6 @@ import java.util.regex.Pattern;
  * 
  * Do NOT use this class in new code. Always use PaymentEvidenceService.getPaymentsByProperty() 
  * or other DB-backed query methods instead.
- * 
- * Details on text extraction logic (for reference):
- * - Priority: If a transaction row with PAYMENT exists, extract ONLY from that row
- * - Do not allow summary fields to override transaction row data
- * - Valid extraction sources:
- *   - Transaction row (HIGHEST PRIORITY): Date + Amount from "DD/MM/YY PAYMENT ... $X" row
- *   - Fallback (only if no transaction row): Summary labels
  */
 @Deprecated(since = "Phase 3", forRemoval = false)
 @Component
