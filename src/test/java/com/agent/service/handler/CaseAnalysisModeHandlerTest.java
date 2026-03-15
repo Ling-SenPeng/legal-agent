@@ -52,6 +52,49 @@ class CaseAnalysisModeHandlerTest {
         testQueryBuilder = new TestQueryBuilder();
         testIssueExtractor = new TestIssueExtractor();
         
+        // Create test double for PaymentEvidenceService
+        var testPaymentEvidenceService = new com.agent.service.PaymentEvidenceService() {
+            @Override
+            public java.util.List<com.agent.model.PaymentRecord> getPaymentsByDocument(Long pdfDocumentId) {
+                return java.util.List.of();
+            }
+            
+            @Override
+            public java.util.List<com.agent.model.PaymentRecord> getPaymentsByProperty(String propertyAddress, String propertyCity) {
+                return java.util.List.of();
+            }
+            
+            @Override
+            public java.util.List<com.agent.model.PaymentRecord> getPaymentsByCategory(String category) {
+                return java.util.List.of();
+            }
+            
+            @Override
+            public java.util.List<com.agent.model.PaymentRecord> getPaymentsByPropertyAndDateRange(String propertyAddress, String propertyCity, java.time.LocalDate dateFrom, java.time.LocalDate dateTo) {
+                return java.util.List.of();
+            }
+            
+            @Override
+            public java.util.List<com.agent.model.PaymentRecord> getMortgagePaymentsByPropertyAndDateRange(String propertyAddress, String propertyCity, java.time.LocalDate dateFrom, java.time.LocalDate dateTo) {
+                return java.util.List.of();
+            }
+            
+            @Override
+            public com.agent.model.PaymentSummary summarizePaymentsByPropertyAndDateRange(String propertyAddress, String propertyCity, java.time.LocalDate dateFrom, java.time.LocalDate dateTo) {
+                return null;
+            }
+            
+            @Override
+            public java.util.List<com.agent.model.LegalEvidenceLine> formatPaymentRecordsAsEvidence(java.util.List<com.agent.model.PaymentRecord> records) {
+                return java.util.List.of();
+            }
+            
+            @Override
+            public com.agent.model.LegalEvidenceLine formatPaymentSummaryAsEvidence(com.agent.model.PaymentSummary summary) {
+                return null;
+            }
+        };
+        
         // For testing, create a handler with actual authority services
         // In a full test scenario, these could be mocked or stubbed
         var realAuthorityQueryBuilder = new com.agent.service.analysis.authority.RuleBasedIssueAuthorityRetrievalStrategy();
@@ -72,6 +115,7 @@ class CaseAnalysisModeHandlerTest {
         );
         
         handler = new CaseAnalysisModeHandler(
+            testPaymentEvidenceService,
             testRetrievalService, 
             testContextBuilder,
             testQueryCleaner,
