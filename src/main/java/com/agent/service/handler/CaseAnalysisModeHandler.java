@@ -88,6 +88,12 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     
     // ThreadLocal to store property scope detection result for access during formatting
     private final ThreadLocal<PropertyScopeDetector.PropertyScopeResult> currentPropertyScope = new ThreadLocal<>();
+    
+    // ThreadLocal to store structured PaymentRecord data from PaymentEvidenceService queries.
+    // This is the canonical source for payment facts (not re-parsed chunk text).
+    // Set when payment-related queries retrieve paymentRecords from the DB.
+    // Use in extractPaymentRecordsAsFacts() to generate CaseFact objects using structured DB data.
+    private final ThreadLocal<List<PaymentRecord>> currentPaymentRecords = new ThreadLocal<>();
 
     public CaseAnalysisModeHandler(
         PaymentEvidenceService paymentEvidenceService,
@@ -314,6 +320,7 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             currentEvidenceChunks.remove();
             currentCaseProfile.remove();
             currentPropertyScope.remove();
+            currentPaymentRecords.remove();
         }
     }
     
@@ -679,6 +686,9 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     private List<EvidenceChunk> retrieveAndMergeEvidence(List<String> retrievalQueries, int topK) {
         logger.debug("[CASE_ANALYSIS] retrieveAndMergeEvidence: initial queries={}", retrievalQueries.size());
         
+        // Clear prior payment records to prevent stale state across requests
+        currentPaymentRecords.set(new ArrayList<>());
+        
         // ===== PAYMENT EVIDENCE PRE-FLIGHT (Phase 1) =====
         
         // Step 1: Detect if this is a payment-related query
@@ -710,6 +720,14 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                     if (!paymentRecords.isEmpty()) {
                         logger.info("[CASE_ANALYSIS_PAYMENT_ROUTING] Found {} payment records for property", 
                             paymentRecords.size());
+                        
+                        // IMPORTANT: Store structured PaymentRecord objects in ThreadLocal.
+                        // These are canonical data source (DB-backed, not re-parsed from chunk text).
+                        // The extractPaymentRecordsAsFacts() method will use these directly.
+                        currentPaymentRecords.set(paymentRecords);
+                        logger.debug("[CASE_ANALYSIS_PAYMENT_ROUTING] Stored {} structured PaymentRecord objects in ThreadLocal",
+                            paymentRecords.size());
+                        
                         List<EvidenceChunk> paymentChunks = convertPaymentRecordsToChunks(paymentRecords);
                         
                         // Merge payment chunks with any chunk-based evidence
@@ -2161,43 +2179,21 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             logger.info("[CASE_PROFILE] dos={}", profile.getDateOfSeparation());
         }
         
-        List<EvidenceChunk> chunks = currentEvidenceChunks.get();
-        if (chunks == null || chunks.isEmpty()) {
-            logger.debug("[REIMBURSEMENT_PAYMENT_RECORDS] count=0 reason=no_evidence_chunks");
-            return paymentFacts;
-        }
+        // ===== STRUCTURED PAYMENT RECORDS (DB-BACKED, CANONICAL) =====
+        // Try to read structured PaymentRecord objects from ThreadLocal.
+        // These come from PaymentEvidenceService queries (payment_records table).
+        // This is the canonical source - do NOT re-extract from chunk text.
         
-        // Keywords that indicate mortgage/payment statements
-        String[] paymentKeywords = {
-            "mortgage", "payment", "loan", "principal", "interest",
-            "monthly", "due date", "amortization", "statement"
-        };
+        List<PaymentRecord> structuredRecords = currentPaymentRecords.get();
         
-        List<String> extractedRecordLogs = new ArrayList<>();
-        
-        for (EvidenceChunk chunk : chunks) {
-            String content = chunk.text().toLowerCase();
-            String source = String.format("Doc %d, Chunk %d", chunk.docId(), chunk.chunkId());
+        if (structuredRecords != null && !structuredRecords.isEmpty()) {
+            logger.debug("[PAYMENT_RECORDS_FACT_EXTRACTION] Using structured PaymentRecord objects (count={})",
+                structuredRecords.size());
+            logger.debug("[PAYMENT_RECORDS_FACT_EXTRACTION] Data source: DB-backed, canonical");
             
-            // Check if this chunk contains payment-related content
-            boolean isPaymentChunk = false;
-            for (String keyword : paymentKeywords) {
-                if (content.contains(keyword)) {
-                    isPaymentChunk = true;
-                    break;
-                }
-            }
+            List<String> extractedRecordLogs = new ArrayList<>();
             
-            if (!isPaymentChunk) {
-                continue;
-            }
-            
-            // Extract PaymentRecords from this chunk
-            logger.debug("[PAYMENT_RECORD_EXTRACTOR] extract: {" + chunk + "}");
-            List<PaymentRecord> records = paymentRecordExtractor.extract(chunk.text());
-            
-            // Convert each PaymentRecord to a CaseFact, applying DOS filtering
-            for (PaymentRecord record : records) {
+            for (PaymentRecord record : structuredRecords) {
                 // Apply DOS filtering: only include payments AFTER DOS
                 if (dos != null && !dos.isBlank()) {
                     PaymentDateFilterResult filterResult = filterPaymentByDOS(record, dos);
@@ -2210,8 +2206,13 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                         record.getPaymentDate(), dos);
                 }
                 
+                // Build CaseFact from structured PaymentRecord
                 String factDescription = formatPaymentRecordAsFactDescription(record);
+                
                 if (factDescription != null) {
+                    // Source citation: DB-backed PaymentRecord with document and page reference
+                    String source = buildPaymentRecordSourceCitation(record);
+                    
                     CaseFact fact = new CaseFact(
                         factDescription,
                         FactPolarity.SUPPORTING,
@@ -2221,30 +2222,63 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
                     paymentFacts.add(fact);
                     
                     // Log extracted record details
-                    String recordLog = String.format("property:%s, date:%s, amount:%.2f, loan:%s",
+                    String recordLog = String.format("property:%s, date:%s, amount:%.2f, category:%s, loan:%s",
                         record.getPropertyAddress() != null ? record.getPropertyAddress() : "unknown",
                         record.getPaymentDate() != null ? record.getPaymentDate() : "unknown",
                         record.getTotalAmount() != null ? record.getTotalAmount().doubleValue() : 0.0,
+                        record.getCategory() != null ? record.getCategory() : "unknown",
                         record.getLoanNumber() != null ? record.getLoanNumber() : "unknown");
                     extractedRecordLogs.add(recordLog);
                     
-                    logger.debug("[PAYMENT_RECORD_EXTRACTION] Extracted payment fact: {} | source={}",
+                    logger.debug("[PAYMENT_RECORD_EXTRACTION] Extracted payment fact from DB record: {} | source={}",
                         factDescription, source);
                 }
             }
+            
+            // Log summary of extracted records
+            if (!extractedRecordLogs.isEmpty()) {
+                logger.info("[REIMBURSEMENT_PAYMENT_RECORDS] count={} source=structured_paymentrecords_db",
+                    extractedRecordLogs.size());
+                for (String recordLog : extractedRecordLogs) {
+                    logger.info("[REIMBURSEMENT_PAYMENT_RECORDS] record={}", recordLog);
+                }
+            } else {
+                logger.info("[REIMBURSEMENT_PAYMENT_RECORDS] count=0 (structured records present but filtered by DOS)");
+            }
+            
+            return paymentFacts;
         }
         
-        // Log summary of extracted records
-        if (!extractedRecordLogs.isEmpty()) {
-            logger.info("[REIMBURSEMENT_PAYMENT_RECORDS] count={}", extractedRecordLogs.size());
-            for (String recordLog : extractedRecordLogs) {
-                logger.info("[REIMBURSEMENT_PAYMENT_RECORDS] record={}", recordLog);
-            }
-        } else {
-            logger.info("[REIMBURSEMENT_PAYMENT_RECORDS] count=0");
-        }
+        // ===== FALLBACK: NO STRUCTURED RECORDS (non-payment query or empty result) =====
+        logger.debug("[PAYMENT_RECORDS_FACT_EXTRACTION] No structured PaymentRecord objects available");
+        logger.debug("[PAYMENT_RECORDS_FACT_EXTRACTION] reason=non_payment_query_or_empty_result");
+        logger.info("[REIMBURSEMENT_PAYMENT_RECORDS] count=0 reason=no_structured_paymentrecords");
         
         return paymentFacts;
+    }
+    
+    /**
+     * Build a citation string for a PaymentRecord, referencing the source document and page.
+     * 
+     * Format examples:
+     * - "PaymentRecord doc=1 page=5" (when sourcePage is available)
+     * - "PaymentRecord doc=1" (when sourcePage is null)
+     * - "PaymentRecord (source unavailable)" (when pdfDocumentId is null)
+     * 
+     * @param record The PaymentRecord to cite
+     * @return Citation string for use in source field
+     */
+    private String buildPaymentRecordSourceCitation(PaymentRecord record) {
+        if (record.getPdfDocumentId() != null) {
+            if (record.getSourcePage() != null) {
+                return String.format("PaymentRecord doc=%d page=%s", 
+                    record.getPdfDocumentId(), record.getSourcePage());
+            } else {
+                return String.format("PaymentRecord doc=%d", record.getPdfDocumentId());
+            }
+        }
+        // Fallback when documentId is absent (rare)
+        return "PaymentRecord (source unavailable)";
     }
     
     /**
@@ -2364,19 +2398,77 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
     
     /**
      * Format a PaymentRecord as a human-readable fact description.
-     * Example: "Mortgage payment of $4,679.23 on 01/02/26 for Newark property (Loan #2109013512)"
+     * 
+     * CRITICAL: Uses totalAmount as the canonical payment amount (DB field, not re-parsed).
+     * 
+     * Guardrails to prevent overstating amounts:
+     * - If totalAmount is present: use it as "Mortgage payment of $X" (canonical)
+     * - If totalAmount is null but interest/escrow/tax are present: derive total and explicitly label as "derived"
+     * - If only principalAmount is present: label as "principal component" (not "monthly payment")
+     * - Never infer amounts from sourceSnippet text
+     * 
+     * Includes components (principal/interest/escrow) in parentheses for transparency.
+     * 
+     * Examples:
+     * - totalAmount=2366.42: "Mortgage payment of $2,366.42 on 01/02/26 for Newark property"
+     * - totalAmount=null, principal+interest+tax=2500: "Derived mortgage payment of $2,500.00 on 01/02/26..."
+     * - totalAmount=null, principal=500: "Mortgage principal component of $500.00 on 01/02/26..."
+     * 
+     * @param record The PaymentRecord to format
+     * @return Human-readable fact description, or null if no amount data available
      */
     private String formatPaymentRecordAsFactDescription(PaymentRecord record) {
-        if (record.getTotalAmount() == null) {
+        // Determine primary amount and source field
+        Double primaryAmount = null;
+        String sourceAmountField = null;
+        
+        if (record.getTotalAmount() != null) {
+            // CANONICAL: Use totalAmount from DB
+            primaryAmount = record.getTotalAmount().doubleValue();
+            sourceAmountField = "totalAmount";
+            logger.debug("[PAYMENT_FACT_FORMATTING] sourceAmountField=totalAmount value={}", primaryAmount);
+        } else if (hasAnyComponent(record)) {
+            // Try to derive total from available components
+            Double derived = deriveTotalFromComponents(record);
+            if (derived != null && derived > 0) {
+                primaryAmount = derived;
+                sourceAmountField = "derivedComponents";
+                logger.debug("[PAYMENT_FACT_FORMATTING] sourceAmountField=derivedComponents value={}", primaryAmount);
+            } else if (record.getPrincipalAmount() != null) {
+                // Fallback: only principal available - describe as component, not full payment
+                primaryAmount = record.getPrincipalAmount().doubleValue();
+                sourceAmountField = "principalOnly";
+                logger.debug("[PAYMENT_FACT_FORMATTING] sourceAmountField=principalOnly value={}", primaryAmount);
+            }
+        }
+        
+        if (primaryAmount == null || primaryAmount <= 0) {
+            logger.debug("[PAYMENT_FACT_FORMATTING] No valid amount data available - skipping record");
             return null;
         }
         
-        StringBuilder fact = new StringBuilder("Mortgage payment of $");
-        fact.append(String.format("%.2f", record.getTotalAmount().doubleValue()));
+        // Build fact description
+        StringBuilder fact = new StringBuilder();
+        
+        // Determine payment type label based on source field and category
+        
+        if (sourceAmountField.equals("principalOnly")) {
+            // Special case: only principal available - explicitly note it's a component
+            fact.append("Mortgage principal component of $");
+        } else if (sourceAmountField.equals("derivedComponents")) {
+            // Derived from multiple components - explicitly label as derived
+            fact.append("Derived mortgage payment of $");
+        } else {
+            // Standard case: totalAmount is canonical
+            fact.append("Mortgage payment of $");
+        }
+        
+        fact.append(String.format("%.2f", primaryAmount));
         
         // Add date if available
         if (record.getPaymentDate() != null) {
-            fact.append(" on ").append(record.getPaymentDate().format(java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy")));
+            fact.append(" on ").append(record.getPaymentDate()
+                .format(java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy")));
         }
         
         // Add property if available
@@ -2389,7 +2481,84 @@ public class CaseAnalysisModeHandler implements TaskModeHandler {
             fact.append(" (Loan #").append(record.getLoanNumber()).append(")");
         }
         
+        // Append component breakdown for transparency (principal/interest/escrow)
+        String componentBreakdown = buildComponentBreakdown(record);
+        if (componentBreakdown != null && !componentBreakdown.isEmpty()) {
+            fact.append(". Components: ").append(componentBreakdown);
+        }
+        
         return fact.toString();
+    }
+    
+    /**
+     * Check if any payment component (principal/interest/escrow/tax/insurance) is present.
+     * 
+     * @param record The PaymentRecord
+     * @return true if at least one component is non-null and > 0
+     */
+    private boolean hasAnyComponent(PaymentRecord record) {
+        if (record.getPrincipalAmount() != null && record.getPrincipalAmount().doubleValue() > 0) return true;
+        if (record.getInterestAmount() != null && record.getInterestAmount().doubleValue() > 0) return true;
+        if (record.getEscrowAmount() != null && record.getEscrowAmount().doubleValue() > 0) return true;
+        if (record.getTaxAmount() != null && record.getTaxAmount().doubleValue() > 0) return true;
+        if (record.getInsuranceAmount() != null && record.getInsuranceAmount().doubleValue() > 0) return true;
+        return false;
+    }
+    
+    /**
+     * Derive total payment from available components.
+     * Sum principal + interest + escrow + tax + insurance.
+     * Returns null if no components are present or all sum to 0.
+     * 
+     * @param record The PaymentRecord
+     * @return Derived total, or null if not possible
+     */
+    private Double deriveTotalFromComponents(PaymentRecord record) {
+        double total = 0.0;
+        if (record.getPrincipalAmount() != null) total += record.getPrincipalAmount().doubleValue();
+        if (record.getInterestAmount() != null) total += record.getInterestAmount().doubleValue();
+        if (record.getEscrowAmount() != null) total += record.getEscrowAmount().doubleValue();
+        if (record.getTaxAmount() != null) total += record.getTaxAmount().doubleValue();
+        if (record.getInsuranceAmount() != null) total += record.getInsuranceAmount().doubleValue();
+        return total > 0 ? total : null;
+    }
+    
+    /**
+     * Build a component breakdown string showing principal, interest, escrow, etc.
+     * Format: "principal $X.XX, interest $Y.YY, escrow $Z.ZZ"
+     * Omits components that are null or 0.
+     * 
+     * @param record The PaymentRecord
+     * @return Component breakdown string, or null if no components
+     */
+    private String buildComponentBreakdown(PaymentRecord record) {
+        StringBuilder breakdown = new StringBuilder();
+        
+        if (record.getPrincipalAmount() != null && record.getPrincipalAmount().doubleValue() > 0) {
+            breakdown.append("principal $").append(String.format("%.2f", record.getPrincipalAmount().doubleValue()));
+        }
+        
+        if (record.getInterestAmount() != null && record.getInterestAmount().doubleValue() > 0) {
+            if (breakdown.length() > 0) breakdown.append(", ");
+            breakdown.append("interest $").append(String.format("%.2f", record.getInterestAmount().doubleValue()));
+        }
+        
+        if (record.getEscrowAmount() != null && record.getEscrowAmount().doubleValue() > 0) {
+            if (breakdown.length() > 0) breakdown.append(", ");
+            breakdown.append("escrow $").append(String.format("%.2f", record.getEscrowAmount().doubleValue()));
+        }
+        
+        if (record.getTaxAmount() != null && record.getTaxAmount().doubleValue() > 0) {
+            if (breakdown.length() > 0) breakdown.append(", ");
+            breakdown.append("tax $").append(String.format("%.2f", record.getTaxAmount().doubleValue()));
+        }
+        
+        if (record.getInsuranceAmount() != null && record.getInsuranceAmount().doubleValue() > 0) {
+            if (breakdown.length() > 0) breakdown.append(", ");
+            breakdown.append("insurance $").append(String.format("%.2f", record.getInsuranceAmount().doubleValue()));
+        }
+        
+        return breakdown.length() > 0 ? breakdown.toString() : null;
     }
     
     /**
