@@ -15,8 +15,6 @@ import com.agent.service.analysis.CaseIssueExtractor;
 import com.agent.service.analysis.FactClassifier;
 import com.agent.service.analysis.ClaimStrengthCalculator;
 import com.agent.service.analysis.CounterArgumentFilter;
-import com.agent.service.analysis.MortgageStatementParser;
-import com.agent.service.extraction.PaymentRecordExtractor;
 import com.agent.service.analysis.authority.IssueAuthorityRetrievalStrategy;
 import com.agent.service.analysis.authority.AuthorityRetrievalService;
 import com.agent.service.analysis.authority.AuthoritySummarizer;

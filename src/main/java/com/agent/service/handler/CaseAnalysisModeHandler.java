@@ -26,8 +26,6 @@ import com.agent.service.analysis.authority.AuthoritySummarizer;
 import com.agent.service.analysis.FactClassifier;
 import com.agent.service.analysis.ClaimStrengthCalculator;
 import com.agent.service.analysis.CounterArgumentFilter;
-import com.agent.service.analysis.MortgageStatementParser;
-import com.agent.service.extraction.PaymentRecordExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
